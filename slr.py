@@ -1,44 +1,33 @@
-from enum import Enum
+
+class HelperSymbol:
+    def __init__(self, desc):
+        self.desc = desc
+
+    def __repr__(self):
+        return self.desc.__repr__()
+
+    def __str__(self):
+        return self.desc.__str__()
+
+    def __format__(self, *args, **kwargs):
+        return self.desc.__format__(*args, **kwargs)
 
 
-def _is_item_collection_equal(A, B):
-    if len(A) != len(B):
-        return False
-    for item in A:
-        if item not in B:
-            return False
-    return True
+SYMBOL_HELPER_EOF = HelperSymbol('$end')
+# SYMBOL_HELPER_S = HelperSymbol('S\'')
 
 
-class Ns(Enum):
-    EE = 1
-    E = 2
-    T = 3
-    F = 4
+class GrammarBase(object):
+    pass
 
 
-class Ts(Enum):
-    PLUS = 3
-    STAR = 4
-    LP = 5
-    RP = 6
-    ID = 7
-
-
-PRESET_PRODUCTIONS = [
-    (Ns.EE, Ns.E),
-    (Ns.E, Ns.E, Ts.PLUS, Ns.T), (Ns.E, Ns.T),
-    (Ns.T, Ns.T, Ts.STAR, Ns.F), (Ns.T, Ns.F),
-    (Ns.F, Ts.LP, Ns.E, Ts.RP), (Ns.F, Ts.ID),
-]
-
-
-class GrammarBox(object):
+class GrammarSlr(GrammarBase):
     def __init__(self):
-        self.prods = PRESET_PRODUCTIONS
-        self.symbols = list(Ns) + list(Ts)
-        self.terminal_symbols = [0] + list(iter(Ts))
-        self.nonterminal_symbols = list(iter(Ns))
+        self.prods = []
+        self.symbols = []
+        self.terminal_symbols = []
+        self.nonterminal_symbols = []
+        self.start_symbol = None
 
         self._first_cache = {}
         self._follow_cache = {}
@@ -48,6 +37,20 @@ class GrammarBox(object):
         self._table_action_buffer = None
         self._table_goto = None
         self._table_action = None
+
+    def set_grammar(self, *, prods=None,
+                    terminal_symbols=None, nonterminal_symbols=None,
+                    start_symbol=None):
+        prods = list(prods) if prods else []
+        terminal_symbols = list(terminal_symbols) if terminal_symbols else []
+        nonterminal_symbols = list(nonterminal_symbols) if nonterminal_symbols else []
+        terminal_symbols.insert(0, SYMBOL_HELPER_EOF)
+
+        self.prods = prods
+        self.terminal_symbols = terminal_symbols
+        self.nonterminal_symbols = nonterminal_symbols
+        self.symbols = nonterminal_symbols + terminal_symbols
+        self.start_symbol = start_symbol if start_symbol else nonterminal_symbols[0]
 
     def _first(self, X, lookup_cache=True):
         if lookup_cache and X in self._first_cache:
@@ -89,7 +92,7 @@ class GrammarBox(object):
 
     def _compute_follows(self):
         self._follow_cache = flws = {s: [] for s in self.nonterminal_symbols}
-        flws[Ns.EE].append(0)
+        flws[self.start_symbol].append(SYMBOL_HELPER_EOF)
 
         def unique_merge(fr, to):
             count = 0
@@ -120,50 +123,47 @@ class GrammarBox(object):
                             some_added += unique_merge(flws[A], flws[B])
         return flws
 
-    def closure(self, I):
-        J = I.copy()
-        flag = False
-        while True:
-            flag = False
-            for prod_i, dot_i in J:
-                prod = self.prods[prod_i]
-                if dot_i >= len(prod) or prod[dot_i] not in Ns:
+    def closure(self, I):  # noqa: E741
+        J = I[:]
+
+        some_added = True
+        while some_added:
+            some_added = False
+            for prod_idx, dot_pos in J:
+                prod_exp = self.prods[prod_idx]
+                if dot_pos >= len(prod_exp) or prod_exp[dot_pos] not in self.nonterminal_symbols:
                     continue
-                after_symbol = prod[dot_i]
+                after_symbol = prod_exp[dot_pos]
                 for prod_i, prod in enumerate(self.prods):
                     if prod[0] != after_symbol:
                         continue
                     new_item = (prod_i, 1)
                     if new_item not in J:
                         J.append(new_item)
-                        flag = True
-            if flag is False:
-                break
+                        some_added = True
 
         J.sort()
         return J
 
-    def goto(self, I, X):
+    def goto(self, I, X):  # noqa: E741
         J = []
-        for item_prod_id, item_dot_pos in I:
-            item_prod_exp = self.prods[item_prod_id]
-            if item_dot_pos < len(item_prod_exp) and\
-                    item_prod_exp[item_dot_pos] == X:
-                J.append((item_prod_id, item_dot_pos + 1))
+        for prod_idx, dot_pos in I:
+            prod_exp = self.prods[prod_idx]
+            if dot_pos < len(prod_exp) and prod_exp[dot_pos] == X:
+                J.append((prod_idx, dot_pos + 1))
         return self.closure(J)
 
     def items(self):
         C = [self.closure([(0, 1)])]
-        has_new_collection_added = True
-        while has_new_collection_added:
-            has_new_collection_added = False
-            for k in range(len(C)):
-                I = C[k]
+        some_added = True
+        while some_added:
+            some_added = False
+            for I in C:  # noqa: E741
                 for X in self.symbols:
                     g = self.goto(I, X)
                     if len(g) > 0 and g not in C:
                         C.append(g)
-                        has_new_collection_added = True
+                        some_added = True
         return C
 
     def generate_analysis_table(self):
@@ -189,21 +189,21 @@ class GrammarBox(object):
                 prod_exp = self.prods[prod_idx]
                 if dot_pos < len(prod_exp) and prod_exp[dot_pos] in self.terminal_symbols:
                     a = prod_exp[dot_pos]
-                    a_i = self.terminal_symbols.index(a)
+                    a_idx = self.terminal_symbols.index(a)
                     item_j = self.goto(item_i, a)
                     j = self._item_collections_cache.index(item_j)  # TODO
-                    print(i, a_i, a, prod_exp, self._table_action[i, a_i])
-                    assert self._table_action[i, a_i] == 0
-                    self._table_action[i, a_i] = j << 2 | 3
-                elif prod_exp[0] == Ns.EE and dot_pos == len(prod_exp):
-                    a_i = 0
-                    assert self._table_action[i, a_i] == 0
-                    self._table_action[i, a_i] = 1
+                    print(i, a_idx, a, prod_exp, self._table_action[i, a_idx])
+                    assert self._table_action[i, a_idx] == 0
+                    self._table_action[i, a_idx] = j << 2 | 3
+                elif prod_exp[0] == self.start_symbol and dot_pos == len(prod_exp):
+                    a_idx = 0
+                    assert self._table_action[i, a_idx] == 0
+                    self._table_action[i, a_idx] = 1
                 elif dot_pos == len(prod_exp):
                     for a in self._follow_cache[prod_exp[0]]:
-                        a_i = self.terminal_symbols.index(a)
-                        assert self._table_action[i, a_i] == 0
-                        self._table_action[i, a_i] = prod_idx << 2 | 2
+                        a_idx = self.terminal_symbols.index(a)
+                        assert self._table_action[i, a_idx] == 0
+                        self._table_action[i, a_idx] = prod_idx << 2 | 2
 
         # Set GOTO table for each state
         for i, item_i in enumerate(self._item_collections_cache):
@@ -225,7 +225,7 @@ class GrammarBox(object):
                 ss.append(('\u25AA' if i + 1 == item_dot else ' ') + f'<{r}>')
             ret.append(''.join(ss))
         return '\n'.join(ret)
-    
+
     def print_analysis_table(self):
         if self._table_action is None or self._table_goto is None:
             return
@@ -267,34 +267,4 @@ class GrammarBox(object):
 
         final_str = '\n'.join(table_str_list)
         print(final_str)
-
-
-grammar = GrammarBox()
-print('== CLOSURE ==')
-print(grammar.stringify_item_collection(grammar.closure([(0, 1)])))
-
-print('== CLOSURE ==')
-print(grammar.stringify_item_collection(grammar.closure([(3, 3)])))
-
-print('== GOTO ==')
-print(grammar.stringify_item_collection(grammar.goto([(0, 2), (1, 2)], Ts.PLUS)))
-
-print('== ITEMS ==')
-for i, s in enumerate(grammar.items()):
-    print(f'[{i}]')
-    print(grammar.stringify_item_collection(s))
-
-print('== FIRST ==')
-for s in grammar.nonterminal_symbols:
-    print(f'FIRST({s})', grammar._first(s))
-# for s in grammar.terminal_symbols:
-#     print(f'FIRST({s})', grammar._first(s))
-
-print('== FOLLOW ==')
-for k, f in grammar._compute_follows().items():
-    print(f'FOLLOW({k})', f)
-
-print('== LR Table ==')
-grammar.generate_analysis_table()
-grammar.print_analysis_table()
 
