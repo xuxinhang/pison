@@ -29,12 +29,9 @@ class GrammarSlr(GrammarBase):
         self.nonterminal_symbols = []
         self.start_symbol = None
 
-        self._first_cache = {}
-        self._follow_cache = {}
-        self._item_collections_cache = []
-
-        self._table_goto_buffer = None
-        self._table_action_buffer = None
+        self._first_map = {}
+        self._follow_map = {}
+        self._itemcol = []
         self._table_goto = None
         self._table_action = None
 
@@ -53,11 +50,11 @@ class GrammarSlr(GrammarBase):
         self.start_symbol = start_symbol if start_symbol else nonterminal_symbols[0]
 
     def _first(self, X, lookup_cache=True):
-        if lookup_cache and X in self._first_cache:
-            return self._first_cache[X]
+        if lookup_cache and X in self._first_map:
+            return self._first_map[X]
 
         if X in self.terminal_symbols:
-            fst = self._first_cache[X] = [X]
+            fst = self._first_map[X] = [X]
             return fst
 
         # X is an nonterminal symbol
@@ -70,28 +67,27 @@ class GrammarSlr(GrammarBase):
             # Remember to skip left-recursive productions
             fst += self._first_beta(p[1:], left=X)
 
-        self._first_cache[X] = fst
+        self._first_map[X] = fst
         return fst
 
     def _first_beta(self, beta, left=None):
-        fst = []
+        ret = []
         for X in beta:
             if X == left:
                 break
                 # TODO: Consider the following productions:
                 #   exp -> exp RIGHT
                 #   exp -> None
-            symbol_first = self._first(X)
-            fst += (x for x in symbol_first if x is not None)
-            if None not in symbol_first:
+            X_first = self._first(X)
+            ret += (s for s in X_first if s is not None)
+            if None not in X_first:
                 break
         else:
-            fst.append(None)
-
-        return fst
+            ret.append(None)
+        return ret
 
     def _compute_follows(self):
-        self._follow_cache = flws = {s: [] for s in self.nonterminal_symbols}
+        self._follow_map = flws = {s: [] for s in self.nonterminal_symbols}
         flws[self.start_symbol].append(SYMBOL_HELPER_EOF)
 
         def unique_merge(fr, to):
@@ -125,7 +121,6 @@ class GrammarSlr(GrammarBase):
 
     def closure(self, I):  # noqa: E741
         J = I[:]
-
         some_added = True
         while some_added:
             some_added = False
@@ -141,7 +136,6 @@ class GrammarSlr(GrammarBase):
                     if new_item not in J:
                         J.append(new_item)
                         some_added = True
-
         J.sort()
         return J
 
@@ -153,7 +147,7 @@ class GrammarSlr(GrammarBase):
                 J.append((prod_idx, dot_pos + 1))
         return self.closure(J)
 
-    def items(self):
+    def _compute_itemcol(self):
         C = [self.closure([(0, 1)])]
         some_added = True
         while some_added:
@@ -167,50 +161,48 @@ class GrammarSlr(GrammarBase):
         return C
 
     def generate_analysis_table(self):
-        self._item_collections_cache = self.items()
+        self._itemcol = self._compute_itemcol()
 
-        number_of_state = len(self._item_collections_cache)
+        number_of_state = len(self._itemcol)
         number_of_nonterminal_symbols = len(self.nonterminal_symbols)
         number_of_terminal_symbols = len(self.terminal_symbols)
 
-        self._table_action_buffer = bytearray(
-            4 * number_of_state * number_of_terminal_symbols)
-        self._table_action = memoryview(self._table_action_buffer)\
-            .cast('L', (number_of_state, number_of_terminal_symbols))
-
-        self._table_goto_buffer = bytearray(
-            4 * number_of_state * number_of_nonterminal_symbols)
-        self._table_goto = memoryview(self._table_goto_buffer)\
-            .cast('L', (number_of_state, number_of_nonterminal_symbols))
+        # Initialize table storage space.
+        x, y = number_of_state, number_of_terminal_symbols
+        self._table_action = memoryview(bytearray(x * y * 4)).cast('L', (x, y))
+        x, y = number_of_state, number_of_nonterminal_symbols
+        self._table_goto = memoryview(bytearray(x * y * 4)).cast('L', (x, y))
 
         # Set ACTION table for each state
-        for i, item_i in enumerate(self._item_collections_cache):
-            for prod_idx, dot_pos in item_i:
+        for i, itemset_i in enumerate(self._itemcol):
+            for prod_idx, dot_pos in itemset_i:
                 prod_exp = self.prods[prod_idx]
+                # case 1
                 if dot_pos < len(prod_exp) and prod_exp[dot_pos] in self.terminal_symbols:
                     a = prod_exp[dot_pos]
                     a_idx = self.terminal_symbols.index(a)
-                    item_j = self.goto(item_i, a)
-                    j = self._item_collections_cache.index(item_j)  # TODO
-                    print(i, a_idx, a, prod_exp, self._table_action[i, a_idx])
+                    itemset_j = self.goto(itemset_i, a)
+                    j = self._itemcol.index(itemset_j)  # TODO
                     assert self._table_action[i, a_idx] == 0
                     self._table_action[i, a_idx] = j << 2 | 3
+                # case 2
                 elif prod_exp[0] == self.start_symbol and dot_pos == len(prod_exp):
                     a_idx = 0
                     assert self._table_action[i, a_idx] == 0
                     self._table_action[i, a_idx] = 1
+                # case 3
                 elif dot_pos == len(prod_exp):
-                    for a in self._follow_cache[prod_exp[0]]:
+                    for a in self._follow_map[prod_exp[0]]:
                         a_idx = self.terminal_symbols.index(a)
                         assert self._table_action[i, a_idx] == 0
                         self._table_action[i, a_idx] = prod_idx << 2 | 2
 
         # Set GOTO table for each state
-        for i, item_i in enumerate(self._item_collections_cache):
+        for i, itemset_i in enumerate(self._itemcol):
             for A_idx, A in enumerate(self.nonterminal_symbols):
-                item_j = self.goto(item_i, A)
-                if item_j in self._item_collections_cache:
-                    j = self._item_collections_cache.index(item_j)
+                itemset_j = self.goto(itemset_i, A)
+                if itemset_j in self._itemcol:
+                    j = self._itemcol.index(itemset_j)
                     self._table_goto[i, A_idx] = j
                 else:
                     pass  # Do nothing
