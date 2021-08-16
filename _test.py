@@ -38,7 +38,7 @@ print('== GOTO ==')
 print(grm.stringify_item_collection(grm.goto([(0, 2), (1, 2)], Ts.PLUS)))
 
 print('== ITEMS ==')
-for i, s in enumerate(grm.items()):
+for i, s in enumerate(grm._compute_itemcol()):
     print(f'[{i}]')
     print(grm.stringify_item_collection(s))
 
