@@ -1,20 +1,4 @@
-
-class HelperSymbol:
-    def __init__(self, desc):
-        self.desc = desc
-
-    def __repr__(self):
-        return self.desc.__repr__()
-
-    def __str__(self):
-        return self.desc.__str__()
-
-    def __format__(self, *args, **kwargs):
-        return self.desc.__format__(*args, **kwargs)
-
-
-SYMBOL_HELPER_EOF = HelperSymbol('$end')
-# SYMBOL_HELPER_S = HelperSymbol('S\'')
+from com import SYMBOL_HELPER_EOF
 
 
 class GrammarBase(object):
@@ -41,7 +25,8 @@ class GrammarSlr(GrammarBase):
         prods = list(prods) if prods else []
         terminal_symbols = list(terminal_symbols) if terminal_symbols else []
         nonterminal_symbols = list(nonterminal_symbols) if nonterminal_symbols else []
-        terminal_symbols.insert(0, SYMBOL_HELPER_EOF)
+        if SYMBOL_HELPER_EOF not in terminal_symbols:  # TODO
+            terminal_symbols.insert(0, SYMBOL_HELPER_EOF)
 
         self.prods = prods
         self.terminal_symbols = terminal_symbols
@@ -87,7 +72,7 @@ class GrammarSlr(GrammarBase):
         return ret
 
     def _compute_follows(self):
-        self._follow_map = flws = {s: [] for s in self.nonterminal_symbols}
+        flws = self._follow_map = {s: [] for s in self.nonterminal_symbols}
         flws[self.start_symbol].append(SYMBOL_HELPER_EOF)
 
         def unique_merge(fr, to):
@@ -162,6 +147,8 @@ class GrammarSlr(GrammarBase):
 
     def generate_analysis_table(self):
         self._itemcol = self._compute_itemcol()
+        if not self._follow_map:  # TODO
+            self._compute_follows()
 
         number_of_state = len(self._itemcol)
         number_of_nonterminal_symbols = len(self.nonterminal_symbols)
