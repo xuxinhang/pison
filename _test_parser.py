@@ -49,6 +49,8 @@ class MyParser(Parser):
 
     @__('factor', 'factor', 'DIV', 'term')
     def t_factor_div(self, p):
+        if p[3] == 0:
+            raise SyntaxError('DIV BY ZERO')
         p[0] = p[1] / p[3]
 
     @__('term', 'NUMBER')
@@ -58,6 +60,9 @@ class MyParser(Parser):
     @__('calclist', [('error', 'EOL'), ('calclist', 'error', 'EOL')])
     def t_error(self, p):
         pass
+
+    def error(self, msg):
+        print(f'[SYNTAX ERROR] {msg}')
 
 
 lex = MyLexer()
@@ -71,7 +76,9 @@ par.grammar.print_analysis_table()
 lex.input('''\
 2+3
 24/6+9
-8*8*8*8*8*8*8*8*
+8*
+8*+
+10/0+1*9
 1+2+3
 ''')
 
