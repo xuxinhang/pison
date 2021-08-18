@@ -55,6 +55,10 @@ class MyParser(Parser):
     def t_term_number(self, p):
         p[0] = p[1]
 
+    @__('calclist', [('error', 'EOL'), ('calclist', 'error', 'EOL')])
+    def t_error(self, p):
+        pass
+
 
 lex = MyLexer()
 par = MyParser()
@@ -67,7 +71,8 @@ par.grammar.print_analysis_table()
 lex.input('''\
 2+3
 24/6+9
-8*8*8*8*8*8*8*8
+8*8*8*8*8*8*8*8*
+1+2+3
 ''')
 
 par.parse(lex)

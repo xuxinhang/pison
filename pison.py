@@ -2,10 +2,13 @@ from com import SYMBOL_HELPER_EOF, SYMBOL_HELPER_SI, SYMBOL_HELPER_ERROR
 from slr import GrammarSlr
 
 
-class HelperToken(object):
+class ReduceToken(object):
     def __init__(self, type, value):
         self.type = type
         self.value = value
+
+    def __repr__(self):
+        return 'ReduceToken(%r, %r)' % (self.type, self.value)
 
 
 class NonterminalSymbol(object):
@@ -49,11 +52,8 @@ def _generate_prod_adder(store):
 
         def collect_right_symbols(s):
             if s == 'error':
-                # this is an error symbol
-                s = SYMBOL_HELPER_ERROR
-                if s not in store.terminals:
-                    store.terminals.append(s)
-                return s
+                # SYMBOL_HELPER_ERROR will be inserted later
+                return SYMBOL_HELPER_ERROR
             elif is_nonterminal_name(s):
                 # this is an nonterminal
                 return fetch_helper_symbol(store.nonterminals, s)
@@ -123,13 +123,16 @@ class MetaParser(type):
         cls._nonterminals = list(store.nonterminals.values())
         cls._nonterminals.insert(0, SYMBOL_HELPER_SI)
         cls._terminals = store.terminals
+        cls._terminals.insert(0, SYMBOL_HELPER_ERROR)
         cls._terminals.insert(0, SYMBOL_HELPER_EOF)
+        print('cls._terminals', cls._terminals)
 
         cls._precedence_map = _normalize_precedence(getattr(cls, 'precedence', []))
 
         cls._error_cb = lambda msg: print(msg)
 
         # TODO: errf errok
+        print(cls._prods)
 
         # Generate the grammar table
         if not is_base:
@@ -170,14 +173,17 @@ class Parser(metaclass=MetaParser):
             if look is None:
                 if look_stack:
                     look = look_stack.pop()
+                    print('get token from look_stack', len(look_stack))
                 else:
                     try:
                         look = next(token_stream)
                     except StopIteration:
-                        look = HelperToken(SYMBOL_HELPER_EOF, None)
+                        look = ReduceToken(SYMBOL_HELPER_EOF, None)
                     else:
                         pass
                     print('fetch new token: ', look)
+
+            print(f'processing {look}')
 
             symbol_idx = cls._terminals.index(look.type)
             # print('look.type = ', look.type, '\nsymbol_idx = ', symbol_idx,
@@ -212,7 +218,7 @@ class Parser(metaclass=MetaParser):
                     self.errorok = False
                     cls._error_cb('Syntax error.')
                     look_stack.append(look)
-                    look = HelperToken(SYMBOL_HELPER_ERROR, 'error')
+                    look = ReduceToken(SYMBOL_HELPER_ERROR, 'error')
                     continue
 
                 del state_stack[-prod_right_length:]
@@ -222,7 +228,7 @@ class Parser(metaclass=MetaParser):
                 state_stack.append(goto_state)
                 state = goto_state
 
-                nonterminal_token = HelperToken(prod_left, tslice[0])
+                nonterminal_token = ReduceToken(prod_left, tslice[0])
                 symbol_stack.append(nonterminal_token)
 
                 continue
@@ -236,6 +242,7 @@ class Parser(metaclass=MetaParser):
                 print(look)
                 print(state)
                 if look.type == SYMBOL_HELPER_ERROR:
+                    # Report an exception if this error cannot be handled
                     if len(state_stack) <= 1:  # TODO
                         raise SyntaxError('Unhandled error.')
                     state_stack.pop()
@@ -246,7 +253,7 @@ class Parser(metaclass=MetaParser):
                         cls._error_cb('Syntax error.')  # TODO
                     error_count = 3
                     look_stack.append(look)
-                    look = HelperToken(SYMBOL_HELPER_ERROR, 'error')
+                    look = ReduceToken(SYMBOL_HELPER_ERROR, 'error')
 
                 continue
 
