@@ -2,6 +2,29 @@ from com import SYMBOL_HELPER_EOF, SYMBOL_HELPER_SI, SYMBOL_HELPER_ERROR
 from slr import GrammarSlr
 
 
+class DefaultLogger(object):
+    def __init__(self, *, f):
+        if f is None:
+            from sys import stderr
+            self.f = stderr
+        else:
+            self.f = f
+
+    def debug(self, msg):
+        self.f.write('DEBUG: ' + msg + '\n')
+
+    def info(self, msg):
+        self.f.write('INFO : ' + msg + '\n')
+
+    def warning(self, msg):
+        self.f.write('WARN : ' + msg + '\n')
+
+    def error(self, msg, *args, **kwargs):
+        self.f.write('ERROR: ' + msg + '\n')
+
+    critical = debug
+
+
 class ReduceToken(object):
     def __init__(self, type, value):
         self.type = type
@@ -125,14 +148,12 @@ class MetaParser(type):
         cls._terminals = store.terminals
         cls._terminals.insert(0, SYMBOL_HELPER_ERROR)
         cls._terminals.insert(0, SYMBOL_HELPER_EOF)
-        print('cls._terminals', cls._terminals)
 
         cls._precedence_map = _normalize_precedence(getattr(cls, 'precedence', []))
 
         cls._error_cb = lambda msg: print(msg)
 
         # TODO: errf errok
-        print(cls._prods)
 
         # Generate the grammar table
         if not is_base:
@@ -144,10 +165,36 @@ class MetaParser(type):
 
 
 class Parser(metaclass=MetaParser):
-    def __init__(self):
+    def __init__(self, debug=None, logger=None):
+        cls = self.__class__
+
         self.errorok = True
         self.state_stack = []
         self.symbol_stack = []
+
+        # configurate the logger
+        self.logger = None
+        if logger:
+            self.logger = logger
+        else:
+            if debug is True:
+                from sys import stderr
+                self.logger = DefaultLogger(f=stderr)
+            elif debug is False or debug is None:
+                self.logger = None
+            else:
+                self.logger = DefaultLogger(f=debug)
+
+        # debug logger
+        logger = self.logger
+        if logger:
+            logger.debug('Parser Grammar Information --->')
+            logger.debug('>> Terminals (%d):' % (len(cls._terminals), ))
+            logger.debug('   ' + repr(cls._terminals))
+            logger.debug('>> Nonterminals (%d):' % (len(cls._nonterminals), ))
+            logger.debug('   ' + repr(cls._nonterminals))
+            logger.debug('>> Productions (%d):' % (len(cls._prods), ))
+            logger.debug('   ' + repr(cls._prods))
 
     def errok(self):
         self.errorok = True
@@ -158,6 +205,7 @@ class Parser(metaclass=MetaParser):
 
     def parse(self, token_stream):
         cls = self.__class__
+        logger = self.logger
         grmtab_action, grmtab_goto =\
             cls.grammar._table_action, cls.grammar._table_goto
 
@@ -173,7 +221,8 @@ class Parser(metaclass=MetaParser):
             if look is None:
                 if look_stack:
                     look = look_stack.pop()
-                    print('get token from look_stack', len(look_stack))
+                    if logger:
+                        logger.debug('Get token (look_stack): ' + str(look))
                 else:
                     try:
                         look = next(token_stream)
@@ -181,18 +230,24 @@ class Parser(metaclass=MetaParser):
                         look = ReduceToken(SYMBOL_HELPER_EOF, None)
                     else:
                         pass
-                    print('fetch new token: ', look)
+                    if logger:
+                        logger.debug('Get token (extern): ' + str(look))
 
-            print(f'processing {look}')
+            if logger:
+                logger.debug('Processing token: ' + str(look))
+                logger.debug('Current state: ' + str(state))
+                # print(symbol_stack)
+                # print(state_stack)
 
             symbol_idx = cls._terminals.index(look.type)
-            # print('look.type = ', look.type, '\nsymbol_idx = ', symbol_idx,
-            #       '\nstate = ', state)
             action = grmtab_action[state, symbol_idx]
             action_type = action & 3
             action_value = action >> 2
 
             if action_type == 3:
+                if logger:
+                    logger.debug('Action::Shift')
+
                 # shift a symbol into the stack
                 state = action_value
                 state_stack.append(state)
@@ -204,6 +259,9 @@ class Parser(metaclass=MetaParser):
                 continue
 
             if action_type == 2:
+                if logger:
+                    logger.debug('Action::Reduce')
+
                 # reduce symbols on the stack with a production
                 prod_idx = action_value
                 prod_exp = cls._prods[prod_idx]
@@ -234,13 +292,15 @@ class Parser(metaclass=MetaParser):
                 continue
 
             if action_type == 1:
+                if logger:
+                    logger.debug('Action::Accept')
+
                 return symbol_stack[-1].value
 
             if action_type == 0:
-                print(symbol_stack)
-                print(state_stack)
-                print(look)
-                print(state)
+                if logger:
+                    logger.debug('Action::Error')
+
                 if look.type == SYMBOL_HELPER_ERROR:
                     # Report an exception if this error cannot be handled
                     if len(state_stack) <= 1:  # TODO

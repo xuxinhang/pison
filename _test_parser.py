@@ -61,10 +61,10 @@ class MyParser(Parser):
 
 
 lex = MyLexer()
-par = MyParser()
-print(par._hdlrs)
-print(par._prods)
-print(par._nonterminals)
+par = MyParser(debug=True)
+# print(par._hdlrs)
+# print(par._prods)
+# print(par._nonterminals)
 # print(par._precedence_map)
 par.grammar.print_analysis_table()
 
