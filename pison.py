@@ -107,6 +107,10 @@ def _normalize_precedence(user_prec):
     return prec_map
 
 
+def default_error_cb(self, msg):
+    print(msg)  # TODO
+
+
 class MetaHelperStore(object):
     def __init__(self):
         self.prods = []
@@ -151,9 +155,14 @@ class MetaParser(type):
 
         cls._precedence_map = _normalize_precedence(getattr(cls, 'precedence', []))
 
-        cls._error_cb = lambda msg: print(msg)
-
-        # TODO: errf errok
+        # Register error handler routine
+        if hasattr(cls, 'error'):
+            if not callable(cls.error):
+                raise TypeError('Error handler must be callable.')
+            cls._error_cb = cls.error
+            del cls.error
+        else:
+            cls._error_cb = default_error_cb
 
         # Generate the grammar table
         if not is_base:
@@ -168,7 +177,7 @@ class Parser(metaclass=MetaParser):
     def __init__(self, debug=None, logger=None):
         cls = self.__class__
 
-        self.errorok = True
+        self._errok_mark = False
         self.state_stack = []
         self.symbol_stack = []
 
@@ -197,7 +206,7 @@ class Parser(metaclass=MetaParser):
             logger.debug('   ' + repr(cls._prods))
 
     def errok(self):
-        self.errorok = True
+        self._errok_mark = True
 
     def restart(self):
         self.state_stack[:] = [0]
@@ -218,6 +227,9 @@ class Parser(metaclass=MetaParser):
         error_count = 0
 
         while True:
+            # mark a syntax error raised manually by the reducer funtion
+            reduce_manual_error = None
+
             if look is None:
                 if look_stack:
                     look = look_stack.pop()
@@ -272,50 +284,66 @@ class Parser(metaclass=MetaParser):
                 tslice = [None] + [x.value for x in symbol_stack[-prod_right_length:]]
                 try:
                     cls._hdlrs[prod_idx](self, tslice)
-                except SyntaxError:
-                    self.errorok = False
-                    cls._error_cb('Syntax error.')
-                    look_stack.append(look)
-                    look = ReduceToken(SYMBOL_HELPER_ERROR, 'error')
+                except SyntaxError as e:
+                    # mark a syntax error raised manually
+                    reduce_manual_error = e
+                else:
+                    del state_stack[-prod_right_length:]
+                    del symbol_stack[-prod_right_length:]
+
+                    goto_state = grmtab_goto[state_stack[-1], prod_left_idx]
+                    state_stack.append(goto_state)
+                    state = goto_state
+
+                    nonterminal_token = ReduceToken(prod_left, tslice[0])
+                    symbol_stack.append(nonterminal_token)
+
                     continue
 
-                del state_stack[-prod_right_length:]
-                del symbol_stack[-prod_right_length:]
+            if action_type == 0 or reduce_manual_error:
+                if logger:
+                    if reduce_manual_error:
+                        logger.debug('To handle syntax error raised manually.')
+                    else:
+                        logger.debug('Action::Error')
 
-                goto_state = grmtab_goto[state_stack[-1], prod_left_idx]
-                state_stack.append(goto_state)
-                state = goto_state
+                if error_count == 0 or self._errok_mark:
+                    self._errok_mark = False
+                    err_msg = reduce_manual_error.args[0]\
+                        if reduce_manual_error else 'syntax error'
+                    cls._error_cb(self, err_msg)
+                error_count = 3
 
-                nonterminal_token = ReduceToken(prod_left, tslice[0])
-                symbol_stack.append(nonterminal_token)
+                # TODO: two special case
 
+                if look.type == SYMBOL_HELPER_ERROR:
+                    # Report an exception if this error cannot be handled
+                    if len(state_stack) <= 1:  # TODO
+                        if getattr(look, '_except', None):
+                            raise SyntaxError(*look._except.args)
+                        else:
+                            raise SyntaxError('Unhandled error.')
+                    state_stack.pop()
+                    state = state_stack[-1]
+                    symbol_stack.pop()
+                else:
+                    if symbol_stack[-1].type == SYMBOL_HELPER_ERROR:
+                        # Just discard this token if the top of symbol stack has been an error.
+                        look = None
+                    else:
+                        # Replace the lookahead token with the newly created error symbol.
+                        look_stack.append(look)
+                        look = ReduceToken(SYMBOL_HELPER_ERROR, look)
+                        look._except = reduce_manual_error
+
+                reduce_manual_error = None
                 continue
 
             if action_type == 1:
                 if logger:
                     logger.debug('Action::Accept')
 
-                return symbol_stack[-1].value
-
-            if action_type == 0:
-                if logger:
-                    logger.debug('Action::Error')
-
-                if look.type == SYMBOL_HELPER_ERROR:
-                    # Report an exception if this error cannot be handled
-                    if len(state_stack) <= 1:  # TODO
-                        raise SyntaxError('Unhandled error.')
-                    state_stack.pop()
-                    state = state_stack[-1]
-                    symbol_stack.pop()
-                else:
-                    if error_count == 0:
-                        cls._error_cb('Syntax error.')  # TODO
-                    error_count = 3
-                    look_stack.append(look)
-                    look = ReduceToken(SYMBOL_HELPER_ERROR, 'error')
-
-                continue
+                return getattr(symbol_stack[-1], 'value', None)
 
             raise RuntimeError('Pison runtime inner error.')
 
