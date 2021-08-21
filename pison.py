@@ -25,6 +25,24 @@ class DefaultLogger(object):
     critical = debug
 
 
+class Production(object):
+    def __init__(self, left, right, *, prec=None, hdlr=None):
+        self._tuple = (left, *right)
+        self.prec = prec
+        self.hdlr = hdlr
+
+    def __getitem__(self, idx):
+        return self._tuple[idx]
+
+    def __len__(self):
+        return len(self._tuple)
+
+    def __repr__(self):
+        return repr(self._tuple[0]) + ' -> '\
+            + ' '.join(map(repr, self._tuple[1:]))\
+            + (('(%prec ' + repr(self.prec) + ')') if self.prec is not None else '')
+
+
 class ReduceToken(object):
     def __init__(self, type, value):
         self.type = type
@@ -59,19 +77,21 @@ def fetch_helper_symbol(sym_dict, desc):
 def _generate_prod_adder(store):
     def mark_production(*args):
         if len(args) == 0:
-            raise TypeError('')
-
-        if isinstance(args[1], list):
-            rights = args[1]
-        elif isinstance(args[1], tuple):
-            rights = [args[1]]
-        else:
-            rights = [args[1:]]
+            raise TypeError('Invalid production.')
 
         left = args[0]
         if not is_nonterminal_name(left):
             raise ValueError('The left side of a production must be an nonterminal.')
         left = fetch_helper_symbol(store.nonterminals, left)
+
+        if len(args) == 1:
+            rights_prec = []
+        elif isinstance(args[1], list):
+            rights_prec = args[1]
+        elif isinstance(args[1], tuple):
+            rights_prec = [args[1]]
+        else:
+            rights_prec = [args[1:]]
 
         def collect_right_symbols(s):
             if s == 'error':
@@ -86,11 +106,21 @@ def _generate_prod_adder(store):
                     store.terminals.append(s)
                 return s
 
-        prods = [(left, *map(collect_right_symbols, r)) for r in rights]
+        def build_prod(item):
+            if len(item) == 0:
+                return Production(left, (), prec=None)
+            elif len(item) >= 2 and type(item[-2]) == str and item[-2].startswith('%prec'):
+                return Production(left, map(collect_right_symbols, item[0:-2]), prec=item[-1])
+            else:
+                return Production(left, map(collect_right_symbols, item[0:]), prec=None)
+
+        prods = list(map(build_prod, rights_prec))
 
         def append_production(f):
-            store.hdlrs += [f] * len(prods)
+            for p in prods:
+                p.hdlr = f
             store.prods += prods
+            store.hdlrs += [f] * len(prods)
             return f
 
         return append_production
@@ -101,10 +131,18 @@ def _generate_prod_adder(store):
 def _normalize_precedence(user_prec):
     prec_map = {}
     for idx, term in enumerate(user_prec):
-        assoc = term[0]
+        assoc = term[0]  # TODO: check assoc
         level = idx + 1
         prec_map.update({s: (s, assoc, level) for s in term[1:]})
     return prec_map
+
+
+def get_rightmost_terminal(syms, terminal_list):
+    for s in reversed(syms):
+        if s in terminal_list:
+            return s
+    else:
+        return None
 
 
 def default_error_cb(self, msg):
@@ -132,6 +170,8 @@ class MetaParser(type):
         store = meta.stores[name]
         is_base = len(bases) == 0
 
+        # precedence map
+        cls._precedence_map = _normalize_precedence(getattr(cls, 'precedence', []))
         cls._prods = store.prods
         cls._hdlrs = store.hdlrs
 
@@ -141,10 +181,10 @@ class MetaParser(type):
         elif len(cls._prods) > 0:
             start_symbol = store.prods[0][0]
         else:
-            start_symbol = None
+            start_symbol = None  # WARN
 
         if start_symbol:
-            cls._prods.insert(0, (SYMBOL_HELPER_SI, start_symbol))
+            cls._prods.insert(0, Production(SYMBOL_HELPER_SI, (start_symbol,)))
             cls._hdlrs.insert(0, None)
 
         cls._nonterminals = list(store.nonterminals.values())
@@ -153,7 +193,19 @@ class MetaParser(type):
         cls._terminals.insert(0, SYMBOL_HELPER_ERROR)
         cls._terminals.insert(0, SYMBOL_HELPER_EOF)
 
-        cls._precedence_map = _normalize_precedence(getattr(cls, 'precedence', []))
+        # check whether production %prec field is valid
+        for p in cls._prods:
+            if p.prec is None:
+                ref_terminal = get_rightmost_terminal(p[1:], cls._terminals)
+                if ref_terminal is None or ref_terminal not in cls._precedence_map:
+                    p._precedence = None
+                else:
+                    p._precedence = cls._precedence_map[ref_terminal]
+            else:
+                ref_terminal = p.prec
+                if ref_terminal not in cls._precedence_map:
+                    raise ValueError('%prec symbol not assigned in precedence field.')
+                p._precedence = cls._precedence_map[ref_terminal]
 
         # Register error handler routine
         if hasattr(cls, 'error'):
@@ -169,7 +221,8 @@ class MetaParser(type):
             grm = cls.grammar = GrammarSlr()
             grm.set_grammar(prods=cls._prods,
                             terminal_symbols=cls._terminals,
-                            nonterminal_symbols=cls._nonterminals)
+                            nonterminal_symbols=cls._nonterminals,
+                            precedence_map=cls._precedence_map)
             grm.generate_analysis_table()
 
 
@@ -198,12 +251,13 @@ class Parser(metaclass=MetaParser):
         logger = self.logger
         if logger:
             logger.debug('Parser Grammar Information --->')
-            logger.debug('>> Terminals (%d):' % (len(cls._terminals), ))
-            logger.debug('   ' + repr(cls._terminals))
-            logger.debug('>> Nonterminals (%d):' % (len(cls._nonterminals), ))
-            logger.debug('   ' + repr(cls._nonterminals))
-            logger.debug('>> Productions (%d):' % (len(cls._prods), ))
-            logger.debug('   ' + repr(cls._prods))
+            logger.debug('Terminals (%d):' % (len(cls._terminals), ))
+            logger.debug('. ' + repr(cls._terminals))
+            logger.debug('Nonterminals (%d):' % (len(cls._nonterminals), ))
+            logger.debug('. ' + repr(cls._nonterminals))
+            logger.debug('Productions (%d):' % (len(cls._prods), ))
+            for p in cls._prods:
+                logger.debug('. ' + repr(p))
 
     def errok(self):
         self._errok_mark = True
@@ -248,8 +302,7 @@ class Parser(metaclass=MetaParser):
             if logger:
                 logger.debug('Processing token: ' + str(look))
                 logger.debug('Current state: ' + str(state))
-                # print(symbol_stack)
-                # print(state_stack)
+                # print(symbol_stack, state_stack)
 
             symbol_idx = cls._terminals.index(look.type)
             action = grmtab_action[state, symbol_idx]
@@ -327,7 +380,7 @@ class Parser(metaclass=MetaParser):
                     state = state_stack[-1]
                     symbol_stack.pop()
                 else:
-                    if symbol_stack[-1].type == SYMBOL_HELPER_ERROR:
+                    if len(symbol_stack) >= 1 and symbol_stack[-1].type == SYMBOL_HELPER_ERROR:
                         # Just discard this token if the top of symbol stack has been an error.
                         look = None
                     else:

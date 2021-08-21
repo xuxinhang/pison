@@ -1,6 +1,10 @@
 from com import SYMBOL_HELPER_EOF
 
 
+class GrammarError(Exception):
+    pass
+
+
 class GrammarBase(object):
     pass
 
@@ -21,18 +25,21 @@ class GrammarSlr(GrammarBase):
 
     def set_grammar(self, *, prods=None,
                     terminal_symbols=None, nonterminal_symbols=None,
+                    precedence_map=None,
                     start_symbol=None):
         prods = list(prods) if prods else []
         terminal_symbols = list(terminal_symbols) if terminal_symbols else []
-        nonterminal_symbols = list(nonterminal_symbols) if nonterminal_symbols else []
         if SYMBOL_HELPER_EOF not in terminal_symbols:  # TODO
             terminal_symbols.insert(0, SYMBOL_HELPER_EOF)
+        nonterminal_symbols = list(nonterminal_symbols) if nonterminal_symbols else []
+        precedence_map = {} if precedence_map is None else precedence_map
 
         self.prods = prods
         self.terminal_symbols = terminal_symbols
         self.nonterminal_symbols = nonterminal_symbols
         self.symbols = nonterminal_symbols + terminal_symbols
         self.start_symbol = start_symbol if start_symbol else nonterminal_symbols[0]
+        self.precedence_map = precedence_map
 
     def _first(self, X, lookup_cache=True):
         if lookup_cache and X in self._first_map:
@@ -160,29 +167,98 @@ class GrammarSlr(GrammarBase):
         x, y = number_of_state, number_of_nonterminal_symbols
         self._table_goto = memoryview(bytearray(x * y * 4)).cast('L', (x, y))
 
+        # the helper routine to solve a pair of action conflicts.
+        def solve_conflict(prev_action, next_action, terminal=None):
+            if prev_action == next_action:
+                return prev_action
+
+            prev_type, prev_value = (prev_action & 3), (prev_action >> 2)
+            next_type, next_value = (next_action & 3), (next_action >> 2)
+
+            # shift/shift conflict: is a grammar error
+            if prev_type == 3 and next_type == 3:
+                raise GrammarError('Unsolvable grammar conflict (shift/shift).')
+
+            # reduce/reduce conflict: use the first defined production
+            elif prev_type == 2 and next_type == 2:
+                return prev_action if prev_value < next_value else next_action
+
+            # reduce/shift conflict: compare precedence
+            elif prev_type == 2 and next_type == 3:
+                _, prev_assc, prev_level = self.prods[prev_value]._precedence or ('right', 0)
+                _, next_assc, next_level = self.precedence_map.get(terminal, ('right', 0))
+                if prev_level == next_level:  # assert r_assc == s_assc
+                    # two items with the same level always have the same assoc
+                    if next_assc == 'left':
+                        return prev_action
+                    elif next_assc == 'right':
+                        return next_action
+                    elif next_assc == 'nonassoc':
+                        return 0  # TODO: syntax error
+                else:
+                    return prev_action if prev_level > next_level else next_action
+
+            # shift/reduce conflict: compare precedence
+            elif prev_type == 3 and next_type == 2:
+                _, prev_assc, prev_level = self.precedence_map.get(terminal, ('right', 0))
+                _, next_assc, next_level = self.prods[next_value]._precedence or ('right', 0)
+                if prev_level == next_level:  # assert r_assc == s_assc
+                    if next_assc == 'left':
+                        return next_action
+                    elif next_assc == 'right':
+                        return prev_action
+                    elif next_assc == 'nonassoc':
+                        return 0  # TODO: syntax error
+                else:
+                    return prev_action if prev_level > next_level else next_action
+
+            # all other conflicts are unsolvable
+            else:
+                raise GrammarError('Unsolvable grammar conflict (*/*).')
+
         # Set ACTION table for each state
         for i, itemset_i in enumerate(self._itemcol):
             for prod_idx, dot_pos in itemset_i:
                 prod_exp = self.prods[prod_idx]
-                # case 1
+
+                # case 1) shift
                 if dot_pos < len(prod_exp) and prod_exp[dot_pos] in self.terminal_symbols:
                     a = prod_exp[dot_pos]
                     a_idx = self.terminal_symbols.index(a)
                     itemset_j = self.goto(itemset_i, a)
                     j = self._itemcol.index(itemset_j)  # TODO
-                    assert self._table_action[i, a_idx] == 0
-                    self._table_action[i, a_idx] = j << 2 | 3
-                # case 2
+                    previous_action = self._table_action[i, a_idx]
+                    expected_action = j << 2 | 3
+                    if previous_action == 0:
+                        self._table_action[i, a_idx] = expected_action
+                    else:
+                        self._table_action[i, a_idx] =\
+                            solve_conflict(previous_action, expected_action, a)
+
+                # case 2) accept
                 elif prod_exp[0] == self.start_symbol and dot_pos == len(prod_exp):
                     a_idx = 0
-                    assert self._table_action[i, a_idx] == 0
-                    self._table_action[i, a_idx] = 1
-                # case 3
+                    previous_action = self._table_action[i, a_idx]
+                    if previous_action == 0:
+                        self._table_action[i, a_idx] = 1
+                    else:
+                        self._table_action[i, a_idx] = solve_conflict(previous_action, 1, a)
+
+                # case 3) reduce
                 elif dot_pos == len(prod_exp):
                     for a in self._follow_map[prod_exp[0]]:
                         a_idx = self.terminal_symbols.index(a)
-                        assert self._table_action[i, a_idx] == 0
-                        self._table_action[i, a_idx] = prod_idx << 2 | 2
+                        previous_action = self._table_action[i, a_idx]
+                        expected_action = prod_idx << 2 | 2
+                        if previous_action == 0:
+                            self._table_action[i, a_idx] = expected_action
+                        else:
+                            self._table_action[i, a_idx] =\
+                                solve_conflict(previous_action, expected_action, a)
+
+                # case 4) error
+                else:
+                    pass
 
         # Set GOTO table for each state
         for i, itemset_i in enumerate(self._itemcol):
