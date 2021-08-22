@@ -62,7 +62,7 @@ class ProductionAdder(object):
         left = args[0]
 
         if len(args) == 1:
-            rests = [()]
+            rests = [()]  # one empty production
         elif type(args[1]) is list:
             rests = args[1]
         elif type(args[1]) is tuple:
@@ -70,22 +70,20 @@ class ProductionAdder(object):
         else:
             rests = [args[1:]]
 
-        prods = []
-
         def _norm_right(s):
             if s == 'error':
                 return AUG_SYMBOL_ERROR
             return s
 
-        for rest in rests:
+        def _struct_production(rest):
             ret_prec = None
             ret_right = None
             last_mark_name = None
             last_mark_pos = -1
 
-            def scan(i, r):
-                nonlocal last_mark_name, last_mark_pos, ret_prec, ret_right
-                if type(r) is str and r[0] == '%' or r is None:
+            for i in range(len(rest) + 1):
+                r = None if i == len(rest) else rest[i]
+                if r is None or (type(r) is str and r[0] == '%'):
                     if last_mark_name is None:
                         ret_right = map(_norm_right, rest[last_mark_pos+1:i])
                     elif last_mark_name == 'prec':
@@ -97,13 +95,13 @@ class ProductionAdder(object):
                         raise ValueError('Unexpected %')
                     last_mark_name = r and r[1:]
                     last_mark_pos = i
+                if r is None:
+                    break
 
-            for i, r in enumerate(rest):
-                scan(i, r)
-            else:
-                scan(len(rest), None)
+            return Production(left, ret_right, prec=ret_prec)
 
-            prods.append(Production(left, ret_right, prec=ret_prec))
+        prods = []
+        prods.extend(map(_struct_production, rests))
 
         # save value for later calling
         self.prods = prods
