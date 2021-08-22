@@ -1,4 +1,4 @@
-from com import SYMBOL_HELPER_EOF, SYMBOL_HELPER_SI, SYMBOL_HELPER_ERROR
+from com import AUG_SYMBOL_EOF, AUG_SYMBOL_SI, AUG_SYMBOL_ERROR
 from slr import GrammarSlr
 
 
@@ -52,89 +52,67 @@ class ReduceToken(object):
         return 'ReduceToken(%r, %r)' % (self.type, self.value)
 
 
-class NonterminalSymbol(object):
-    def __init__(self, desc):
-        self.desc = desc
-
-    def __repr__(self):
-        return '<%s>' % (str(self.desc), )
-
-    def __format__(self, *args, **kwargs):
-        return self.desc.__format__(*args, **kwargs)
-
-
-def is_nonterminal_name(s):
-    return type(s) is str and s[0].islower()
-
-
-def fetch_helper_symbol(sym_dict, desc):
-    if desc in sym_dict:
-        return sym_dict[desc]
-    s = sym_dict[desc] = NonterminalSymbol(desc)
-    return s
-
-
 def _generate_prod_adder(store):
-    def mark_production(*args):
+    def prepare_production(*args):
         if len(args) == 0:
             raise TypeError('Invalid production.')
 
         left = args[0]
-        if not is_nonterminal_name(left):
-            raise ValueError('The left side of a production must be an nonterminal.')
-        left = fetch_helper_symbol(store.nonterminals, left)
 
         if len(args) == 1:
-            rights_prec = []
-        elif isinstance(args[1], list):
-            rights_prec = args[1]
-        elif isinstance(args[1], tuple):
-            rights_prec = [args[1]]
+            rests = []
+        elif type(args[1]) is list:
+            rests = args[1]
+        elif type(args[1]) is tuple:
+            rests = [args[1]]
         else:
-            rights_prec = [args[1:]]
+            rests = [args[1:]]
 
-        def collect_right_symbols(s):
+        prods = []
+
+        def _norm_right(s):
             if s == 'error':
-                # SYMBOL_HELPER_ERROR will be inserted later
-                return SYMBOL_HELPER_ERROR
-            elif is_nonterminal_name(s):
-                # this is an nonterminal
-                return fetch_helper_symbol(store.nonterminals, s)
+                return AUG_SYMBOL_ERROR
+            return s
+
+        for rest in rests:
+            ret_prec = None
+            ret_right = None
+            last_mark_name = None
+            last_mark_pos = -1
+
+            def scan(i, r):
+                nonlocal last_mark_name, last_mark_pos, ret_prec, ret_right
+                if type(r) is str and r[0] == '%' or r is None:
+                    if last_mark_name is None:
+                        ret_right = map(_norm_right, rest[last_mark_pos+1:i])
+                    elif last_mark_name == 'prec':
+                        if last_mark_pos + 2 == i:
+                            ret_prec = rest[last_mark_pos+1]
+                        else:
+                            raise ValueError('Invalid parameter for %prec')
+                    else:
+                        raise ValueError('Unexpected %')
+                    last_mark_name = r and r[1:]
+                    last_mark_pos = i
+
+            for i, r in enumerate(rest):
+                scan(i, r)
             else:
-                # this is a terminal
-                if s not in store.terminals:
-                    store.terminals.append(s)
-                return s
+                scan(len(rest), None)
 
-        def build_prod(item):
-            if len(item) == 0:
-                return Production(left, (), prec=None)
-            elif len(item) >= 2 and type(item[-2]) == str and item[-2].startswith('%prec'):
-                return Production(left, map(collect_right_symbols, item[0:-2]), prec=item[-1])
-            else:
-                return Production(left, map(collect_right_symbols, item[0:]), prec=None)
+            prods.append(Production(left, ret_right, prec=ret_prec))
 
-        prods = list(map(build_prod, rights_prec))
-
-        def append_production(f):
+        def commit_production(f):
             for p in prods:
                 p.hdlr = f
             store.prods += prods
             store.hdlrs += [f] * len(prods)
             return f
 
-        return append_production
+        return commit_production
 
-    return mark_production
-
-
-def _normalize_precedence(user_prec):
-    prec_map = {}
-    for idx, term in enumerate(user_prec):
-        assoc = term[0]  # TODO: check assoc
-        level = idx + 1
-        prec_map.update({s: (s, assoc, level) for s in term[1:]})
-    return prec_map
+    return prepare_production
 
 
 def get_rightmost_terminal(syms, terminal_list):
@@ -170,30 +148,49 @@ class MetaParser(type):
         store = meta.stores[name]
         is_base = len(bases) == 0
 
-        # precedence map
-        cls._precedence_map = _normalize_precedence(getattr(cls, 'precedence', []))
+        # Set productions
         cls._prods = store.prods
+
+        # Set production handlers
         cls._hdlrs = store.hdlrs
 
+        # Normalize productions
+        cls._nonterminals = [AUG_SYMBOL_SI]
+        for p in cls._prods:
+            if p[0] not in cls._nonterminals:
+                cls._nonterminals.append(p[0])
+
+        cls._terminals = [AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR]
+        for p in cls._prods:
+            for t in p[1:]:
+                if t not in cls._nonterminals and t not in cls._terminals:
+                    cls._terminals.append(t)
+
+        # Generate precedence map
+        cls._precedence_map = prec_map = {}
+        for idx, term in enumerate(getattr(cls, 'precedence', [])):
+            level = idx + 1
+            if (assoc := term[0]) not in {'left', 'right', 'nonassoc'}:
+                raise ValueError('Invalid precedence assoc value.')
+            for s in term[1:]:
+                prec_map[s] = (s, assoc, level)
+
+        # Set start symbol
         if hasattr(cls, 'start'):
-            start_symbol = fetch_helper_symbol(store.nonterminals, cls.start)
+            if cls.start is None or cls.start not in cls._nonterminals:
+                raise ValueError('The start symbol is not a valid nonterminal.')
+            start_symbol = cls.start
             del cls.start
         elif len(cls._prods) > 0:
-            start_symbol = store.prods[0][0]
+            start_symbol = cls._prods[0][0]
         else:
             start_symbol = None  # WARN
 
-        if start_symbol:
-            cls._prods.insert(0, Production(SYMBOL_HELPER_SI, (start_symbol,)))
+        if start_symbol is not None:
+            cls._prods.insert(0, Production(AUG_SYMBOL_SI, (start_symbol,)))
             cls._hdlrs.insert(0, None)
 
-        cls._nonterminals = list(store.nonterminals.values())
-        cls._nonterminals.insert(0, SYMBOL_HELPER_SI)
-        cls._terminals = store.terminals
-        cls._terminals.insert(0, SYMBOL_HELPER_ERROR)
-        cls._terminals.insert(0, SYMBOL_HELPER_EOF)
-
-        # check whether production %prec field is valid
+        # Pre-calculate precedence for each production
         for p in cls._prods:
             if p.prec is None:
                 ref_terminal = get_rightmost_terminal(p[1:], cls._terminals)
@@ -207,15 +204,6 @@ class MetaParser(type):
                     raise ValueError('%prec symbol not assigned in precedence field.')
                 p._precedence = cls._precedence_map[ref_terminal]
 
-        # Register error handler routine
-        if hasattr(cls, 'error'):
-            if not callable(cls.error):
-                raise TypeError('Error handler must be callable.')
-            cls._error_cb = cls.error
-            del cls.error
-        else:
-            cls._error_cb = default_error_cb
-
         # Generate the grammar table
         if not is_base:
             grm = cls.grammar = GrammarSlr()
@@ -224,6 +212,15 @@ class MetaParser(type):
                             nonterminal_symbols=cls._nonterminals,
                             precedence_map=cls._precedence_map)
             grm.generate_analysis_table()
+
+        # Register error handler routine
+        if hasattr(cls, 'error'):
+            if not callable(cls.error):
+                raise TypeError('Error handler must be callable.')
+            cls._error_cb = cls.error
+            del cls.error
+        else:
+            cls._error_cb = default_error_cb
 
 
 class Parser(metaclass=MetaParser):
@@ -264,7 +261,7 @@ class Parser(metaclass=MetaParser):
 
     def restart(self):
         self.state_stack[:] = [0]
-        self.symbol_stack[:] = [SYMBOL_HELPER_EOF]
+        self.symbol_stack[:] = [AUG_SYMBOL_EOF]
 
     def parse(self, token_stream):
         cls = self.__class__
@@ -293,7 +290,7 @@ class Parser(metaclass=MetaParser):
                     try:
                         look = next(token_stream)
                     except StopIteration:
-                        look = ReduceToken(SYMBOL_HELPER_EOF, None)
+                        look = ReduceToken(AUG_SYMBOL_EOF, None)
                     else:
                         pass
                     if logger:
@@ -369,7 +366,7 @@ class Parser(metaclass=MetaParser):
 
                 # TODO: two special case
 
-                if look.type == SYMBOL_HELPER_ERROR:
+                if look.type == AUG_SYMBOL_ERROR:
                     # Report an exception if this error cannot be handled
                     if len(state_stack) <= 1:  # TODO
                         if getattr(look, '_except', None):
@@ -380,13 +377,13 @@ class Parser(metaclass=MetaParser):
                     state = state_stack[-1]
                     symbol_stack.pop()
                 else:
-                    if len(symbol_stack) >= 1 and symbol_stack[-1].type == SYMBOL_HELPER_ERROR:
+                    if len(symbol_stack) >= 1 and symbol_stack[-1].type == AUG_SYMBOL_ERROR:
                         # Just discard this token if the top of symbol stack has been an error.
                         look = None
                     else:
                         # Replace the lookahead token with the newly created error symbol.
                         look_stack.append(look)
-                        look = ReduceToken(SYMBOL_HELPER_ERROR, look)
+                        look = ReduceToken(AUG_SYMBOL_ERROR, look)
                         look._except = reduce_manual_error
 
                 reduce_manual_error = None

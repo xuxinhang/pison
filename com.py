@@ -1,5 +1,7 @@
 
 class AugmentedSymbol:
+    _augmented = True
+
     def __init__(self, desc):
         self.desc = desc
 
@@ -10,6 +12,6 @@ class AugmentedSymbol:
         return self.desc.__format__(*args, **kwargs)
 
 
-SYMBOL_HELPER_EOF = AugmentedSymbol('$end')
-SYMBOL_HELPER_SI = AugmentedSymbol('S\'')
-SYMBOL_HELPER_ERROR = AugmentedSymbol('error')
+AUG_SYMBOL_EOF = AugmentedSymbol('$end')
+AUG_SYMBOL_SI = AugmentedSymbol('S\'')
+AUG_SYMBOL_ERROR = AugmentedSymbol('error')
