@@ -1,4 +1,4 @@
-from com import SYMBOL_HELPER_EOF
+from com import SYMBOL_HELPER_EOF, AugmentedSymbol
 
 
 class GrammarError(Exception):
@@ -281,7 +281,7 @@ class GrammarSlr(GrammarBase):
             ret.append(''.join(ss))
         return '\n'.join(ret)
 
-    def print_analysis_table(self):
+    def print_analysis_table(self, terminal_formatter=lambda x: x):
         if self._table_action is None or self._table_goto is None:
             return
         size_state, size_action = self._table_action.shape
@@ -299,8 +299,13 @@ class GrammarSlr(GrammarBase):
 
         table_str_list = []
 
+        def format_terminal(t):
+            if not isinstance(t, AugmentedSymbol):
+                t = terminal_formatter(t)
+            return f'{t:<8}'
+
         table_header_str = '    | '
-        table_header_str += ' '.join(f'{x:<8}' for x in self.terminal_symbols)
+        table_header_str += ' '.join(map(format_terminal, self.terminal_symbols))
         table_header_str += ' | '
         table_header_str += ' '.join(f'{x:<8}' for x in self.nonterminal_symbols)
         table_str_list.append('-' * len(table_header_str))
