@@ -1,11 +1,11 @@
-from com import SYMBOL_HELPER_EOF, AugmentedSymbol
+from com import AUG_SYMBOL_EOF
 
 
 class GrammarError(Exception):
     pass
 
 
-class GrammarBase(object):
+class GrammarBase():
     pass
 
 
@@ -29,8 +29,8 @@ class GrammarSlr(GrammarBase):
                     start_symbol=None):
         prods = list(prods) if prods else []
         terminal_symbols = list(terminal_symbols) if terminal_symbols else []
-        if SYMBOL_HELPER_EOF not in terminal_symbols:  # TODO
-            terminal_symbols.insert(0, SYMBOL_HELPER_EOF)
+        if AUG_SYMBOL_EOF not in terminal_symbols:  # TODO
+            terminal_symbols.insert(0, AUG_SYMBOL_EOF)
         nonterminal_symbols = list(nonterminal_symbols) if nonterminal_symbols else []
         precedence_map = {} if precedence_map is None else precedence_map
 
@@ -80,7 +80,7 @@ class GrammarSlr(GrammarBase):
 
     def _compute_follows(self):
         flws = self._follow_map = {s: [] for s in self.nonterminal_symbols}
-        flws[self.start_symbol].append(SYMBOL_HELPER_EOF)
+        flws[self.start_symbol].append(AUG_SYMBOL_EOF)
 
         def unique_merge(fr, to):
             count = 0
@@ -300,7 +300,7 @@ class GrammarSlr(GrammarBase):
         table_str_list = []
 
         def format_terminal(t):
-            if not isinstance(t, AugmentedSymbol):
+            if not getattr(t, '_augmented', False):
                 t = terminal_formatter(t)
             return f'{t:<8}'
 
