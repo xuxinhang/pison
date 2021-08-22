@@ -48,31 +48,32 @@ class CalculatorParser(Parser):
     def t_calclist_2(self, p):
         print('>> ' + str(p[2]))
 
-    @__('exp', CToken.NUMBER)
-    def t_exp_number(self, p):
-        p[0] = p[1]
+    with __('exp') as _:
+        @_(CToken.NUMBER)
+        def t_exp_number(self, p):
+            p[0] = p[1]
 
-    @__('exp', 'exp', CToken.ADD, 'exp')
-    def t_exp_add(self, p):
-        p[0] = p[1] + p[3]
+        @_('exp', CToken.ADD, 'exp')
+        def t_exp_add(self, p):
+            p[0] = p[1] + p[3]
 
-    @__('exp', 'exp', CToken.SUB, 'exp')
-    def t_exp_sub(self, p):
-        p[0] = p[1] - p[3]
+        @_('exp', CToken.SUB, 'exp')
+        def t_exp_sub(self, p):
+            p[0] = p[1] - p[3]
 
-    @__('exp', 'exp', CToken.MUL, 'exp')
-    def t_exp_mul(self, p):
-        p[0] = p[1] * p[3]
+        @_('exp', CToken.MUL, 'exp')
+        def t_exp_mul(self, p):
+            p[0] = p[1] * p[3]
 
-    @__('exp', 'exp', CToken.DIV, 'exp')
-    def t_exp_div(self, p):
-        if p[3] == 0:
-            raise SyntaxError('DIV BY ZERO')
-        p[0] = p[1] / p[3]
+        @_('exp', CToken.DIV, 'exp')
+        def t_exp_div(self, p):
+            if p[3] == 0:
+                raise SyntaxError('DIV BY ZERO')
+            p[0] = p[1] / p[3]
 
-    @__('exp', CToken.SUB, 'exp', '%prec', 'UMINUS')
-    def t_uminus(self, p):
-        p[0] = -p[2]
+        @_(CToken.SUB, 'exp', '%prec', 'UMINUS')
+        def t_uminus(self, p):
+            p[0] = -p[2]
 
     @__('calclist', [('error', CToken.EOL),
                      ('calclist', 'error', CToken.EOL)])
