@@ -52,15 +52,17 @@ class ReduceToken(object):
         return 'ReduceToken(%r, %r)' % (self.type, self.value)
 
 
-def _generate_prod_adder(store):
-    def prepare_production(*args):
+class ProductionAdder(object):
+    def __init__(self, store, *args):
+        self.store = store
+
         if len(args) == 0:
             raise TypeError('Invalid production.')
 
         left = args[0]
 
         if len(args) == 1:
-            rests = []
+            rests = [()]
         elif type(args[1]) is list:
             rests = args[1]
         elif type(args[1]) is tuple:
@@ -103,16 +105,29 @@ def _generate_prod_adder(store):
 
             prods.append(Production(left, ret_right, prec=ret_prec))
 
-        def commit_production(f):
-            for p in prods:
-                p.hdlr = f
-            store.prods += prods
-            store.hdlrs += [f] * len(prods)
-            return f
+        # save value for later calling
+        self.prods = prods
+        self.prod_left = left
 
-        return commit_production
+    def __call__(self, f):
+        prods = self.prods
+        store = self.store
+        for p in prods:
+            p.hdlr = f
+        store.prods += prods
+        store.hdlrs += [f] * len(prods)
+        return f
 
-    return prepare_production
+    def __enter__(self):
+        left = self.prod_left
+        return lambda *args: self.__class__(self.store, left, *args)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+
+def _generate_prod_adder(store):
+    return lambda *args: ProductionAdder(store, *args)
 
 
 def get_rightmost_terminal(syms, terminal_list):
