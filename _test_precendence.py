@@ -36,13 +36,13 @@ class CalculatorParser(Parser):
         ('nonassoc', 'UMINUS'),
     ]
 
-    @__('calclist')
+    @__('calclist', None)
     def t_calclist_0(self, p):
-        print('>>')
+        print('>> EMPTY')
 
     @__('calclist', ('calclist', CToken.EOL))
     def t_calclist_1(self, p):
-        print('>> ' + str(p[1]))
+        print('>> BLANK LINE')
 
     @__('calclist', ('calclist', 'exp', CToken.EOL))
     def t_calclist_2(self, p):
