@@ -331,15 +331,18 @@ class Parser(metaclass=MetaParser):
                 prod_left = prod_exp[0]
                 prod_left_idx = cls._nonterminals.index(prod_left)
 
-                tslice = [None] + [x.value for x in symbol_stack[-prod_right_length:]]
+                tslice = [None]
+                if prod_right_length > 0:
+                    tslice.extend(x.value for x in symbol_stack[-prod_right_length:])
                 try:
                     cls._hdlrs[prod_idx](self, tslice)
                 except SyntaxError as e:
                     # mark a syntax error raised manually
                     reduce_manual_error = e
                 else:
-                    del state_stack[-prod_right_length:]
-                    del symbol_stack[-prod_right_length:]
+                    if prod_right_length > 0:
+                        del state_stack[-prod_right_length:]
+                        del symbol_stack[-prod_right_length:]
 
                     goto_state = grmtab_goto[state_stack[-1], prod_left_idx]
                     state_stack.append(goto_state)

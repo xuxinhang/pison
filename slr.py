@@ -185,8 +185,8 @@ class GrammarSlr(GrammarBase):
 
             # reduce/shift conflict: compare precedence
             elif prev_type == 2 and next_type == 3:
-                _, prev_assc, prev_level = self.prods[prev_value]._precedence or ('right', 0)
-                _, next_assc, next_level = self.precedence_map.get(terminal, ('right', 0))
+                _, prev_assc, prev_level = self.prods[prev_value]._precedence or (None, 'right', 0)
+                _, next_assc, next_level = self.precedence_map.get(terminal, (None, 'right', 0))
                 if prev_level == next_level:  # assert r_assc == s_assc
                     # two items with the same level always have the same assoc
                     if next_assc == 'left':
@@ -200,8 +200,8 @@ class GrammarSlr(GrammarBase):
 
             # shift/reduce conflict: compare precedence
             elif prev_type == 3 and next_type == 2:
-                _, prev_assc, prev_level = self.precedence_map.get(terminal, ('right', 0))
-                _, next_assc, next_level = self.prods[next_value]._precedence or ('right', 0)
+                _, prev_assc, prev_level = self.precedence_map.get(terminal, (None, 'right', 0))
+                _, next_assc, next_level = self.prods[next_value]._precedence or (None, 'right', 0)
                 if prev_level == next_level:  # assert r_assc == s_assc
                     if next_assc == 'left':
                         return next_action
