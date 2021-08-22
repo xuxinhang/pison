@@ -1,69 +1,81 @@
+from enum import Enum
 from plex import Lexer
 from pison import Parser
 
 
+class CToken(Enum):
+    ADD = '+'
+    SUB = '-'
+    MUL = '*'
+    DIV = '/'
+    UMINUS = 0
+    NUMBER = 256
+    EOL = 257
+
+
 class CalculatorLexer(Lexer):
-    __(r'\+')('ADD')
-    __(r'\-')('SUB')
-    __(r'\*')('MUL')
-    __(r'\/')('DIV')
+    __(r'\+')(CToken.ADD)
+    __(r'\-')(CToken.SUB)
+    __(r'\*')(CToken.MUL)
+    __(r'\/')(CToken.DIV)
 
     @__(r'[0-9]+')
     def t_sub(self, t):
-        t.type = 'NUMBER'
+        t.type = CToken.NUMBER
         t.value = int(t.value)
         return t
 
-    __(r'\n')('EOL')
+    __(r'\n')(CToken.EOL)
     __(r'[ \t]')(None)
 
 
 class CalculatorParser(Parser):
     precedence = [
-        ('left', 'ADD', 'SUB'),
-        ('left', 'MUL', 'DIV'),
+        ('left', CToken.ADD, CToken.SUB),
+        ('left', CToken.MUL, CToken.DIV),
         ('nonassoc', 'UMINUS'),
     ]
 
-    @__('calclist', 'EOL')
+    @__('calclist')
     def t_calclist_0(self, p):
         print('>>')
 
-    @__('calclist', ('exp', 'EOL'))
+    @__('calclist', ('calclist', CToken.EOL))
     def t_calclist_1(self, p):
         print('>> ' + str(p[1]))
 
-    @__('calclist', ('calclist', 'exp', 'EOL'))
+    @__('calclist', ('calclist', 'exp', CToken.EOL))
     def t_calclist_2(self, p):
         print('>> ' + str(p[2]))
 
-    @__('exp', 'NUMBER')
+    @__('exp', CToken.NUMBER)
     def t_exp_number(self, p):
         p[0] = p[1]
 
-    @__('exp', 'exp', 'ADD', 'exp')
+    @__('exp', 'exp', CToken.ADD, 'exp')
     def t_exp_add(self, p):
         p[0] = p[1] + p[3]
 
-    @__('exp', 'exp', 'SUB', 'exp')
+    @__('exp', 'exp', CToken.SUB, 'exp')
     def t_exp_sub(self, p):
         p[0] = p[1] - p[3]
 
-    @__('exp', 'exp', 'MUL', 'exp')
+    @__('exp', 'exp', CToken.MUL, 'exp')
     def t_exp_mul(self, p):
         p[0] = p[1] * p[3]
 
-    @__('exp', 'exp', 'DIV', 'exp')
+    @__('exp', 'exp', CToken.DIV, 'exp')
     def t_exp_div(self, p):
         if p[3] == 0:
             raise SyntaxError('DIV BY ZERO')
         p[0] = p[1] / p[3]
 
-    @__('exp', 'SUB', 'exp', '%prec', 'UMINUS')
+    @__('exp', CToken.SUB, 'exp', '%prec', 'UMINUS')
     def t_uminus(self, p):
         p[0] = -p[2]
 
-    @__('calclist', [('error', 'EOL'), ('calclist', 'error', 'EOL')])
+    @__('calclist', [('error', CToken.EOL),
+                     ('calclist', 'error', CToken.EOL)])
     def t_error(self, p):
         pass
 
@@ -72,8 +84,9 @@ class CalculatorParser(Parser):
 
 
 lex = CalculatorLexer()
-par = CalculatorParser(debug=True)
-par.grammar.print_analysis_table()
+par = CalculatorParser(debug=False)
+par.grammar.print_analysis_table(
+    terminal_formatter=lambda t: t.value if type(t.value) is str else t.name)
 
 lex.input('''
 24/6+9
