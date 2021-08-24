@@ -279,8 +279,8 @@ class Parser(metaclass=MetaParser):
     def parse(self, token_stream):
         cls = self.__class__
         logger = self.logger
-        grmtab_action, grmtab_goto =\
-            cls.grammar._table_action, cls.grammar._table_goto
+        grmtab_action = cls.grammar._table_action
+        grmtab_goto = cls.grammar._table_goto
 
         state_stack = self.state_stack = [0]
         symbol_stack = self.symbol_stack = []
@@ -314,7 +314,10 @@ class Parser(metaclass=MetaParser):
                 logger.debug('Current state: ' + str(state))
                 # print(symbol_stack, state_stack)
 
-            symbol_idx = cls._terminals.index(look.type)
+            try:
+                symbol_idx = cls._terminals.index(look.type)
+            except Exception:
+                raise SyntaxError('Unknown token with type ' + str(look.type))
             action = grmtab_action[state, symbol_idx]
             action_type = action & 3
             action_value = action >> 2
