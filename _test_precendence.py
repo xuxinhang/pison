@@ -4,20 +4,26 @@ from pison import Parser
 
 
 class CToken(Enum):
+    POW = '^'
     ADD = '+'
     SUB = '-'
     MUL = '*'
     DIV = '/'
+    LPAR = '('
+    RPAR = ')'
     UMINUS = 0
     NUMBER = 256
     EOL = 257
 
 
 class CalculatorLexer(Lexer):
+    __(r'\^')(CToken.POW)
     __(r'\+')(CToken.ADD)
     __(r'\-')(CToken.SUB)
     __(r'\*')(CToken.MUL)
     __(r'\/')(CToken.DIV)
+    __(r'\(')(CToken.LPAR)
+    __(r'\)')(CToken.RPAR)
 
     @__(r'[0-9]+')
     def t_sub(self, t):
@@ -34,6 +40,7 @@ class CalculatorParser(Parser):
         ('left', CToken.ADD, CToken.SUB),
         ('left', CToken.MUL, CToken.DIV),
         ('nonassoc', 'UMINUS'),
+        ('right', CToken.POW),
     ]
 
     @__('calclist', None)
@@ -75,6 +82,14 @@ class CalculatorParser(Parser):
         def t_uminus(self, p):
             p[0] = -p[2]
 
+        @_(CToken.LPAR, 'exp', CToken.RPAR)
+        def t_par_exp(self, p):
+            p[0] = p[2]
+
+        @_('exp', CToken.POW, 'exp')
+        def t_pow(self, p):
+            p[0] = p[1] ** p[3]
+
     @__('calclist', [('error', CToken.EOL),
                      ('calclist', 'error', CToken.EOL)])
     def t_error(self, p):
@@ -93,8 +108,10 @@ lex.input('''
 24/6+9
 8*+
 10/0+1*9
+10/(0+1)*9
 12/-6*3
 -8*-8/-8/-8
+-2^(-3)^2
 ''')
 
 par.parse(lex)
