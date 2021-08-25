@@ -203,19 +203,10 @@ class MetaParser(type):
             cls._prods.insert(0, Production(AUG_SYMBOL_SI, (start_symbol,)))
             cls._hdlrs.insert(0, None)
 
-        # Pre-calculate precedence for each production
+        # Validate %prec field
         for p in cls._prods:
-            if p.prec is None:
-                ref_terminal = get_rightmost_terminal(p[1:], cls._terminals)
-                if ref_terminal is None or ref_terminal not in cls._precedence_map:
-                    p._precedence = None
-                else:
-                    p._precedence = cls._precedence_map[ref_terminal]
-            else:
-                ref_terminal = p.prec
-                if ref_terminal not in cls._precedence_map:
-                    raise ValueError('%prec symbol not assigned in precedence field.')
-                p._precedence = cls._precedence_map[ref_terminal]
+            if p.prec is not None and p.prec not in cls._precedence_map:
+                raise ValueError('%prec symbol not assigned in precedence field.')
 
         # Generate the grammar table
         if not is_base:

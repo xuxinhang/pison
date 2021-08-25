@@ -167,10 +167,21 @@ class GrammarSlr(GrammarBase):
         x, y = number_of_state, number_of_nonterminal_symbols
         self._table_goto = memoryview(bytearray(x * y * 4)).cast('L', (x, y))
 
+        def get_precedence_key_terminal(prod):
+            if prod.prec:
+                return prod.prec
+            for s in reversed(prod[1:]):
+                if s in self.terminal_symbols:
+                    return s
+            else:
+                return None
+
         # the helper routine to solve a pair of action conflicts.
         def solve_conflict(prev_action, next_action, terminal=None):
             if prev_action == next_action:
                 return prev_action
+
+            _DEFAULT_PRECEDENCE = (None, 'right', 0)
 
             prev_type, prev_value = (prev_action & 3), (prev_action >> 2)
             next_type, next_value = (next_action & 3), (next_action >> 2)
@@ -185,8 +196,9 @@ class GrammarSlr(GrammarBase):
 
             # reduce/shift conflict: compare precedence
             elif prev_type == 2 and next_type == 3:
-                _, prev_assc, prev_level = self.prods[prev_value]._precedence or (None, 'right', 0)
-                _, next_assc, next_level = self.precedence_map.get(terminal, (None, 'right', 0))
+                _, prev_assc, prev_level = self.precedence_map.get(
+                    get_precedence_key_terminal(self.prods[prev_value]), _DEFAULT_PRECEDENCE)
+                _, next_assc, next_level = self.precedence_map.get(terminal, _DEFAULT_PRECEDENCE)
                 if prev_level == next_level:  # assert r_assc == s_assc
                     # two items with the same level always have the same assoc
                     if next_assc == 'left':
@@ -200,8 +212,9 @@ class GrammarSlr(GrammarBase):
 
             # shift/reduce conflict: compare precedence
             elif prev_type == 3 and next_type == 2:
-                _, prev_assc, prev_level = self.precedence_map.get(terminal, (None, 'right', 0))
-                _, next_assc, next_level = self.prods[next_value]._precedence or (None, 'right', 0)
+                _, prev_assc, prev_level = self.precedence_map.get(terminal, _DEFAULT_PRECEDENCE)
+                _, next_assc, next_level = self.precedence_map.get(
+                    get_precedence_key_terminal(self.prods[next_value]), _DEFAULT_PRECEDENCE)
                 if prev_level == next_level:  # assert r_assc == s_assc
                     if next_assc == 'left':
                         return next_action
@@ -212,9 +225,14 @@ class GrammarSlr(GrammarBase):
                 else:
                     return prev_action if prev_level > next_level else next_action
 
-            # all other conflicts are unsolvable
+            # any other conflict is unsolvable
             else:
                 raise GrammarError('Unsolvable grammar conflict (*/*).')
+
+        def update_cell_action(prev_action, next_action, coming_terminal):
+            if prev_action == 0:
+                return next_action
+            return solve_conflict(prev_action, next_action, coming_terminal)
 
         # Set ACTION table for each state
         for i, itemset_i in enumerate(self._itemcol):
@@ -227,34 +245,21 @@ class GrammarSlr(GrammarBase):
                     a_idx = self.terminal_symbols.index(a)
                     itemset_j = self.goto(itemset_i, a)
                     j = self._itemcol.index(itemset_j)  # TODO
-                    previous_action = self._table_action[i, a_idx]
-                    expected_action = j << 2 | 3
-                    if previous_action == 0:
-                        self._table_action[i, a_idx] = expected_action
-                    else:
-                        self._table_action[i, a_idx] =\
-                            solve_conflict(previous_action, expected_action, a)
+                    self._table_action[i, a_idx] =\
+                        update_cell_action(self._table_action[i, a_idx], j << 2 | 3, a)
 
                 # case 2) accept
                 elif prod_exp[0] == self.start_symbol and dot_pos == len(prod_exp):
                     a_idx = 0
-                    previous_action = self._table_action[i, a_idx]
-                    if previous_action == 0:
-                        self._table_action[i, a_idx] = 1
-                    else:
-                        self._table_action[i, a_idx] = solve_conflict(previous_action, 1, a)
+                    self._table_action[i, a_idx] =\
+                        update_cell_action(self._table_action[i, a_idx], 1, a)
 
                 # case 3) reduce
                 elif dot_pos == len(prod_exp):
                     for a in self._follow_map[prod_exp[0]]:
                         a_idx = self.terminal_symbols.index(a)
-                        previous_action = self._table_action[i, a_idx]
-                        expected_action = prod_idx << 2 | 2
-                        if previous_action == 0:
-                            self._table_action[i, a_idx] = expected_action
-                        else:
-                            self._table_action[i, a_idx] =\
-                                solve_conflict(previous_action, expected_action, a)
+                        self._table_action[i, a_idx] =\
+                            update_cell_action(self._table_action[i, a_idx], prod_idx << 2 | 2, a)
 
                 # case 4) error
                 else:
