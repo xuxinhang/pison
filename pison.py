@@ -57,9 +57,14 @@ class ProductionAdder(object):
         self.store = store
 
         if len(args) == 0:
-            raise TypeError('Invalid production.')
+            raise ValueError('The left side of the production must be provided.')
 
-        left = args[0]
+        def _norm_symbol(s):
+            if s == 'error':
+                return AUG_SYMBOL_ERROR
+            return s
+
+        left = _norm_symbol(args[0])
 
         if len(args) == 1:
             rests = [()]  # one empty production
@@ -69,11 +74,6 @@ class ProductionAdder(object):
             rests = [args[1]]
         else:
             rests = [args[1:]]
-
-        def _norm_right(s):
-            if s == 'error':
-                return AUG_SYMBOL_ERROR
-            return s
 
         def _struct_production(rest):
             ret_prec = None
@@ -85,12 +85,12 @@ class ProductionAdder(object):
                 r = None if i == len(rest) else rest[i]
                 if r is None or (type(r) is str and r[0] == '%'):
                     if last_mark_name is None:
-                        ret_right = map(_norm_right, rest[last_mark_pos+1:i])
+                        ret_right = map(_norm_symbol, rest[last_mark_pos+1:i])
                     elif last_mark_name == 'prec':
                         if last_mark_pos + 2 == i:
                             ret_prec = rest[last_mark_pos+1]
                         else:
-                            raise ValueError('Invalid parameter for %prec')
+                            raise ValueError('Invalid %prec parameter.')
                     else:
                         raise ValueError('Unexpected %')
                     last_mark_name = r and r[1:]
@@ -108,6 +108,9 @@ class ProductionAdder(object):
         self.prod_left = left
 
     def __call__(self, f):
+        if not callable(f):
+            raise TypeError('The production handler must be callable.')
+
         prods = self.prods
         store = self.store
         for p in prods:
@@ -169,23 +172,39 @@ class MetaParser(type):
 
         # Normalize productions
         cls._nonterminals = [AUG_SYMBOL_SI]
+        cls._terminals = [AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR]
+
         for p in cls._prods:
+            if p[0] in cls._terminals:
+                raise ValueError('The left side of the production can\'t be the terminal '
+                                 + repr(p[0]))
             if p[0] not in cls._nonterminals:
                 cls._nonterminals.append(p[0])
 
-        cls._terminals = [AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR]
         for p in cls._prods:
             for t in p[1:]:
                 if t not in cls._nonterminals and t not in cls._terminals:
                     cls._terminals.append(t)
 
         # Generate precedence map
+        try:
+            iter(cls_precedence := getattr(cls, 'precedence', []))
+        except Exception:
+            raise TypeError('precedence field must be an iterable.')
+
         cls._precedence_map = prec_map = {}
-        for idx, term in enumerate(getattr(cls, 'precedence', [])):
+        for idx, term in enumerate(cls_precedence):
             level = idx + 1
-            if (assoc := term[0]) not in {'left', 'right', 'nonassoc'}:
+            try:
+                assoc = term[0]
+            except Exception:
+                raise TypeError('precedence item must have one element at least.')
+            if assoc not in {'left', 'right', 'nonassoc'}:
                 raise ValueError('Invalid precedence assoc value.')
             for s in term[1:]:
+                if s in prec_map:
+                    raise ValueError('The terminal %r has already been assigned with precedence.'
+                                     % (s,))
                 prec_map[s] = (s, assoc, level)
 
         # Set start symbol
@@ -206,7 +225,7 @@ class MetaParser(type):
         # Validate %prec field
         for p in cls._prods:
             if p.prec is not None and p.prec not in cls._precedence_map:
-                raise ValueError('%prec symbol not assigned in precedence field.')
+                raise ValueError('%prec symbol is not assigned with precedence.')
 
         # Generate the grammar table
         if not is_base:
@@ -379,10 +398,9 @@ class Parser(metaclass=MetaParser):
                 if look.type == AUG_SYMBOL_ERROR:
                     # Report an exception if this error cannot be handled
                     if len(state_stack) <= 1:  # TODO
-                        if getattr(look, '_except', None):
-                            raise SyntaxError(*look._except.args)
-                        else:
-                            raise SyntaxError('Unhandled error.')
+                        raise SyntaxError('Unrecoverable syntax error.')
+                        # if getattr(look, '_except', None):
+                        #     raise SyntaxError(*look._except.args)
                     state_stack.pop()
                     state = state_stack[-1]
                     symbol_stack.pop()
