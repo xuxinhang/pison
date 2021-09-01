@@ -17,6 +17,7 @@ class GrammarSlr(GrammarBase):
         self.nonterminal_symbols = []
         self.start_symbol = None
 
+        self._prod_index = {}
         self._first_map = {}
         self._follow_map = {}
         self._itemcol = []
@@ -40,6 +41,8 @@ class GrammarSlr(GrammarBase):
         self.symbols = nonterminal_symbols + terminal_symbols
         self.start_symbol = start_symbol if start_symbol else nonterminal_symbols[0]
         self.precedence_map = precedence_map
+
+        self._compute_prod_index()
 
     def _first(self, X, lookup_cache=True):
         if lookup_cache and X in self._first_map:
@@ -111,23 +114,28 @@ class GrammarSlr(GrammarBase):
                             some_added += unique_merge(flws[A], flws[B])
         return flws
 
+    def _compute_prod_index(self):
+        # TODO: How about use array indexed with symbol number?
+        pindex = self._prod_index = {}
+        for prod_idx, prod_exp in enumerate(self.prods):
+            if (left := prod_exp[0]) not in pindex:
+                lst = pindex[left] = []
+            else:
+                lst = pindex[left]
+            lst.append(prod_idx)
+
     def closure(self, I):  # noqa: E741
         J = I[:]
-        some_added = True
-        while some_added:
-            some_added = False
-            for prod_idx, dot_pos in J:
-                prod_exp = self.prods[prod_idx]
-                if dot_pos >= len(prod_exp) or prod_exp[dot_pos] not in self.nonterminal_symbols:
-                    continue
-                after_symbol = prod_exp[dot_pos]
-                for prod_i, prod in enumerate(self.prods):
-                    if prod[0] != after_symbol:
-                        continue
-                    new_item = (prod_i, 1)
-                    if new_item not in J:
+        v, w = 0, len(J)
+        while v < w:
+            prod_idx, dot_pos = J[v]
+            prod_exp = self.prods[prod_idx]
+            if dot_pos < len(prod_exp) and (asym := prod_exp[dot_pos]) in self._prod_index:
+                for p_idx in self._prod_index[asym]:
+                    if (new_item := (p_idx, 1)) not in J:
                         J.append(new_item)
-                        some_added = True
+                        w += 1
+            v += 1
         J.sort()
         return J
 
@@ -141,15 +149,25 @@ class GrammarSlr(GrammarBase):
 
     def _compute_itemcol(self):
         C = [self.closure([(0, 1)])]
-        some_added = True
-        while some_added:
-            some_added = False
-            for I in C:  # noqa: E741
-                for X in self.symbols:
-                    g = self.goto(I, X)
-                    if len(g) > 0 and g not in C:
-                        C.append(g)
-                        some_added = True
+        v, w = 0, len(C)
+        while v < w:
+            I = C[v]  # noqa: E741
+
+            # we care no symbols but following symbols.
+            following_symbols = []
+            for prod_idx, dot_pos in I:
+                prod_exp = self.prods[prod_idx]
+                if dot_pos >= len(prod_exp):
+                    continue
+                if (s := prod_exp[dot_pos]) not in following_symbols:
+                    following_symbols.append(s)
+
+            for X in following_symbols:
+                g = self.goto(I, X)
+                if len(g) > 0 and g not in C:
+                    C.append(g)
+                    w += 1
+            v += 1
         return C
 
     def generate_analysis_table(self):
