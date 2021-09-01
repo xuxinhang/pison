@@ -69,7 +69,7 @@ class ProductionAdder(object):
         if len(args) == 1:
             rests = [()]  # one empty production
         elif type(args[1]) is list:
-            rests = args[1]
+            rests = [r if type(r) is tuple else (r,) for r in args[1]]
         elif type(args[1]) is tuple:
             rests = [args[1]]
         else:
