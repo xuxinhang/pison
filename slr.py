@@ -29,7 +29,8 @@ class GrammarSlr(GrammarBase):
     def set_grammar(self, *, prods=None,
                     terminal_symbols=None, nonterminal_symbols=None,
                     precedence_map=None,
-                    start_symbol=None):
+                    start_symbol=None,
+                    abs_prods=None):
         prods = list(prods) if prods else []
         terminal_symbols = list(terminal_symbols) if terminal_symbols else []
         if AUG_SYMBOL_EOF not in terminal_symbols:  # TODO
@@ -43,6 +44,7 @@ class GrammarSlr(GrammarBase):
         self.symbols = nonterminal_symbols + terminal_symbols
         self.start_symbol = start_symbol if start_symbol else nonterminal_symbols[0]
         self.precedence_map = precedence_map
+        self.abs_prods = abs_prods
 
         self._compute_prod_index()
 
@@ -53,13 +55,13 @@ class GrammarSlr(GrammarBase):
         if trace is None:
             trace = []
 
-        if X in self.terminal_symbols:
+        if X < 0:
             fst = self._first_map[X] = [X]
             return fst
 
         # X is an nonterminal symbol
         fst = []
-        for p in (p for p in self.prods if p[0] == X):
+        for p in (p for p in self.abs_prods if p[0] == X):
             # for empty productions
             if len(p) == 1 or p[1] is None:
                 fst.append(None)
@@ -87,8 +89,8 @@ class GrammarSlr(GrammarBase):
         return ret
 
     def _compute_follows(self):
-        flws = self._follow_map = {s: [] for s in self.nonterminal_symbols}
-        flws[self.start_symbol].append(AUG_SYMBOL_EOF)
+        flws = self._follow_map = [[] for _ in self.nonterminal_symbols]
+        flws[0].append(~self.terminal_symbols.index(AUG_SYMBOL_EOF))
 
         def unique_merge(fr, to):
             count = 0
@@ -101,18 +103,18 @@ class GrammarSlr(GrammarBase):
         some_added = 1
         while some_added:
             some_added = 0
-            for p in self.prods:
-                A = p[0]
-                if len(p) == 1 or p[1] is None:
+            for prod_exp in self.abs_prods:
+                A = prod_exp[0]
+                if len(prod_exp) == 1 or prod_exp[1] is None:
                     continue
-                for i in range(1, len(p)):
-                    B = p[i]
-                    if B not in self.nonterminal_symbols:
+                for i in range(1, len(prod_exp)):
+                    B = prod_exp[i]
+                    if not B >= 0:
                         continue
-                    if i == len(p) - 1:
+                    if i == len(prod_exp) - 1:
                         some_added += unique_merge(flws[A], flws[B])
                     else:
-                        beta_first = self._first_beta(p[i+1:])
+                        beta_first = self._first_beta(prod_exp[i+1:])
                         some_added += unique_merge(
                             (s for s in beta_first if s is not None), flws[B])
                         if None in beta_first:
@@ -129,6 +131,10 @@ class GrammarSlr(GrammarBase):
                 lst = pindex[left]
             lst.append(prod_idx)
 
+        pindex = self._abs_prod_map = [[] for _ in range(len(self.nonterminal_symbols))]
+        for abs_prod_idx, abs_prod_exp in enumerate(self.abs_prods):
+            pindex[abs_prod_exp[0]].append(abs_prod_idx)
+
     def closure(self, I):  # noqa: E741
         J = I[:]
 
@@ -142,9 +148,9 @@ class GrammarSlr(GrammarBase):
         v, w = 0, len(J)
         while v < w:
             prod_idx, dot_pos = J[v]
-            prod_exp = self.prods[prod_idx]
-            if dot_pos < len(prod_exp) and (asym := prod_exp[dot_pos]) in self._prod_index:
-                for p_idx in self._prod_index[asym]:
+            prod_exp = self.abs_prods[prod_idx]
+            if dot_pos < len(prod_exp) and prod_exp[dot_pos] >= 0:
+                for p_idx in self._abs_prod_map[prod_exp[dot_pos]]:
                     if not new_item_mark[p_idx//8] & (1 << p_idx % 8):
                         J.append((p_idx, 1))
                         w += 1
@@ -157,7 +163,7 @@ class GrammarSlr(GrammarBase):
     def goto(self, I, X):  # noqa: E741
         J = []
         for prod_idx, dot_pos in I:
-            prod_exp = self.prods[prod_idx]
+            prod_exp = self.abs_prods[prod_idx]
             if dot_pos < len(prod_exp) and prod_exp[dot_pos] == X:
                 J.append((prod_idx, dot_pos + 1))
         return self.closure(J)
@@ -171,11 +177,10 @@ class GrammarSlr(GrammarBase):
             # we care no symbols but following symbols.
             following_symbols = []
             for prod_idx, dot_pos in I:
-                prod_exp = self.prods[prod_idx]
-                if dot_pos >= len(prod_exp):
-                    continue
-                if (s := prod_exp[dot_pos]) not in following_symbols:
-                    following_symbols.append(s)
+                prod_exp = self.abs_prods[prod_idx]
+                if dot_pos < len(prod_exp):
+                    if (s := prod_exp[dot_pos]) not in following_symbols:
+                        following_symbols.append(s)
 
             for X in following_symbols:
                 g = self.goto(I, X)
@@ -264,48 +269,48 @@ class GrammarSlr(GrammarBase):
         def update_cell_action(prev_action, next_action, coming_terminal):
             if prev_action == 0:
                 return next_action
-            return solve_conflict(prev_action, next_action, coming_terminal)
+            return solve_conflict(prev_action, next_action,
+                                 self.terminal_symbols[~coming_terminal])
 
         # Set ACTION table for each state
         for i, itemset_i in enumerate(self._itemcol):
             for prod_idx, dot_pos in itemset_i:
-                prod_exp = self.prods[prod_idx]
+                prod_exp = self.abs_prods[prod_idx]
 
                 # case 1) shift
-                if dot_pos < len(prod_exp) and prod_exp[dot_pos] in self.terminal_symbols:
+                if dot_pos < len(prod_exp) and prod_exp[dot_pos] < 0:
                     a = prod_exp[dot_pos]
-                    a_idx = self.terminal_symbols.index(a)
                     itemset_j = self.goto(itemset_i, a)
-                    j = self._itemcol.index(itemset_j)  # TODO
-                    self._table_action[i, a_idx] =\
-                        update_cell_action(self._table_action[i, a_idx], j << 2 | 3, a)
+                    j = self._itemcol.index(itemset_j)  # TODO: accelerate with hash
+                    self._table_action[i, ~a] =\
+                        update_cell_action(self._table_action[i, ~a], j << 2 | 3, a)
 
                 # case 2) accept
-                elif prod_exp[0] == self.start_symbol and dot_pos == len(prod_exp):
-                    a_idx = 0
-                    self._table_action[i, a_idx] =\
-                        update_cell_action(self._table_action[i, a_idx], 1, a)
+                elif prod_exp[0] == 0 and dot_pos == len(prod_exp):
+                    a = ~self.terminal_symbols.index(AUG_SYMBOL_EOF)
+                    self._table_action[i, ~a] =\
+                        update_cell_action(self._table_action[i, ~a], 1, a)
 
                 # case 3) reduce
                 elif dot_pos == len(prod_exp):
                     for a in self._follow_map[prod_exp[0]]:
-                        a_idx = self.terminal_symbols.index(a)
-                        self._table_action[i, a_idx] =\
-                            update_cell_action(self._table_action[i, a_idx], prod_idx << 2 | 2, a)
+                        self._table_action[i, ~a] =\
+                            update_cell_action(self._table_action[i, ~a], prod_idx << 2 | 2, a)
 
                 # case 4) error
                 else:
+                    # Each cell is set with "0" by default.
                     pass
 
         print('AD: %s' % (time.time(), ))
 
         # Set GOTO table for each state
         for i, itemset_i in enumerate(self._itemcol):
-            for A_idx, A in enumerate(self.nonterminal_symbols):
+            for A in range(len(self.nonterminal_symbols)):
                 itemset_j = self.goto(itemset_i, A)
                 if itemset_j in self._itemcol:
                     j = self._itemcol.index(itemset_j)
-                    self._table_goto[i, A_idx] = j
+                    self._table_goto[i, A] = j
                 else:
                     pass  # Do nothing
 

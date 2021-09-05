@@ -172,7 +172,7 @@ class MetaParser(type):
         # Set production handlers
         cls._hdlrs = store.hdlrs
 
-        # Normalize productions
+        # Validate and collect grammar symbols in productions
         cls._nonterminals = [AUG_SYMBOL_SI]
         cls._terminals = [AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR]
 
@@ -229,12 +229,23 @@ class MetaParser(type):
             if p.prec is not None and p.prec not in cls._precedence_map:
                 raise ValueError('%prec symbol is not assigned with precedence.')
 
+        # Abstract grammar productions
+        def get_symbol_idx(s):
+            try:
+                return cls._nonterminals.index(s)
+            except Exception:
+                return ~cls._terminals.index(s)
+
+        cls._abs_prods = [tuple(map(get_symbol_idx, p)) for p in cls._prods]
+        assert [len(x) for x in cls._prods] == [len(x) for x in cls._abs_prods]
+
         # Generate the grammar table
         grm = cls.grammar = GrammarSlr()
         grm.set_grammar(prods=cls._prods,
                         terminal_symbols=cls._terminals,
                         nonterminal_symbols=cls._nonterminals,
-                        precedence_map=cls._precedence_map)
+                        precedence_map=cls._precedence_map,
+                        abs_prods = cls._abs_prods),
         print('A: %s' % (time.time(), ))
         grm.compile()
         print('B: %s' % (time.time(), ))
