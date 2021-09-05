@@ -1,4 +1,3 @@
-import time
 from com import AUG_SYMBOL_EOF, AUG_SYMBOL_SI, AUG_SYMBOL_ERROR
 from slr import GrammarSlr
 
@@ -237,7 +236,6 @@ class MetaParser(type):
                 return ~cls._terminals.index(s)
 
         cls._abs_prods = [tuple(map(get_symbol_idx, p)) for p in cls._prods]
-        assert [len(x) for x in cls._prods] == [len(x) for x in cls._abs_prods]
 
         # Generate the grammar table
         grm = cls.grammar = GrammarSlr()
@@ -246,9 +244,7 @@ class MetaParser(type):
                         nonterminal_symbols=cls._nonterminals,
                         precedence_map=cls._precedence_map,
                         abs_prods = cls._abs_prods),
-        print('A: %s' % (time.time(), ))
         grm.compile()
-        print('B: %s' % (time.time(), ))
 
         # Register error handler routine
         if hasattr(cls, 'error'):
@@ -315,9 +311,6 @@ class Parser(metaclass=MetaParser):
         error_count = 0
 
         while True:
-            # mark a syntax error raised manually by the reducer funtion
-            reduce_manual_error = None
-
             if look is None:
                 if look_stack:
                     look = look_stack.pop()
@@ -328,23 +321,21 @@ class Parser(metaclass=MetaParser):
                         look = next(token_stream)
                     except StopIteration:
                         look = ReduceToken(AUG_SYMBOL_EOF, None)
-                    else:
-                        pass
                     if logger:
                         logger.debug('Get token (extern): ' + str(look))
-
-            if logger:
-                logger.debug('Processing token: ' + str(look))
-                logger.debug('Current state: ' + str(state))
-                # print(symbol_stack, state_stack)
 
             try:
                 symbol_idx = cls._terminals.index(look.type)
             except Exception:
                 raise SyntaxError('Unknown token with type ' + str(look.type))
             action = grmtab_action[state, symbol_idx]
-            action_type = action & 3
-            action_value = action >> 2
+            action_type, action_value = (action & 3), (action >> 2)
+
+            # mark a syntax error raised manually by the reducer funtion
+            reduce_manual_error = None
+
+            if logger:
+                logger.debug('Current state: %s >> Coming token: %s' % (state, look))
 
             if action_type == 3:
                 if logger:
@@ -363,13 +354,13 @@ class Parser(metaclass=MetaParser):
             if action_type == 2:
                 # reduce symbols on the stack with a production
                 prod_idx = action_value
-                prod_exp = cls._prods[prod_idx]
+                prod_exp = cls._abs_prods[prod_idx]
                 prod_right_length = len(prod_exp) - 1
-                prod_left = prod_exp[0]
-                prod_left_idx = cls._nonterminals.index(prod_left)
+                prod_left_idx = prod_exp[0]
+                prod_left_sym = cls._nonterminals[prod_left_idx]
 
                 if logger:
-                    logger.debug('Action::Reduce with (%d) %r' % (prod_idx, prod_exp))
+                    logger.debug('Action::Reduce (%d) %r' % (prod_idx, cls._prods[prod_idx]))
 
                 tslice = [None]
                 if prod_right_length > 0:
@@ -388,7 +379,7 @@ class Parser(metaclass=MetaParser):
                     state_stack.append(goto_state)
                     state = goto_state
 
-                    nonterminal_token = ReduceToken(prod_left, tslice[0])
+                    nonterminal_token = ReduceToken(prod_left_sym, tslice[0])
                     symbol_stack.append(nonterminal_token)
 
                     continue
@@ -412,9 +403,10 @@ class Parser(metaclass=MetaParser):
                 if look.type == AUG_SYMBOL_ERROR:
                     # Report an exception if this error cannot be handled
                     if len(state_stack) <= 1:  # TODO
-                        raise SyntaxError('Unrecoverable syntax error.')
-                        # if getattr(look, '_except', None):
-                        #     raise SyntaxError(*look._except.args)
+                        if hasattr(look, '_except'):
+                            raise SyntaxError(*look._except.args)
+                        else:
+                            raise SyntaxError('Unrecoverable syntax error.')
                     state_stack.pop()
                     state = state_stack[-1]
                     symbol_stack.pop()
@@ -428,13 +420,12 @@ class Parser(metaclass=MetaParser):
                         look = ReduceToken(AUG_SYMBOL_ERROR, look)
                         look._except = reduce_manual_error
 
-                reduce_manual_error = None
+                reduce_manual_error = None  # reset
                 continue
 
             if action_type == 1:
                 if logger:
                     logger.debug('Action::Accept')
-
                 return getattr(symbol_stack[-1], 'value', None)
 
             raise RuntimeError('Pison runtime inner error.')

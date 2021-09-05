@@ -44,7 +44,7 @@ class GrammarSlr(GrammarBase):
         self.terminal_symbols = terminal_symbols
         self.nonterminal_symbols = nonterminal_symbols
         self.symbols = nonterminal_symbols + terminal_symbols
-        self.start_symbol = start_symbol if start_symbol else nonterminal_symbols[0]
+        self.start_symbol = start_symbol if start_symbol is not None else nonterminal_symbols[0]
         self.precedence_map = precedence_map
         self.abs_prods = abs_prods
 
@@ -212,8 +212,6 @@ class GrammarSlr(GrammarBase):
         x, y = number_of_state, number_of_nonterminal_symbols
         self._table_goto = memoryview(bytearray(x * y * 4)).cast('L', (x, y))
 
-        print('AC: %s' % (time.time(), ))
-
         def get_precedence_key_terminal(prod):
             if prod.prec:
                 return prod.prec
@@ -282,8 +280,6 @@ class GrammarSlr(GrammarBase):
             return solve_conflict(prev_action, next_action,
                                  self.terminal_symbols[~coming_terminal])
 
-        pr = profile.Profile()
-        pr.enable()
         # Set ACTION table for each state
         for i, itemset_i in enumerate(self._itemcol):
             for prod_idx, dot_pos in itemset_i:
@@ -313,13 +309,7 @@ class GrammarSlr(GrammarBase):
                 else:
                     # Each cell is set with "0" by default.
                     pass
-        pr.disable()
-        pr.print_stats()
 
-        print('AD: %s' % (time.time(), ))
-
-        pr = profile.Profile()
-        pr.enable()
         # Set GOTO table for each state
         for i, itemset_i in enumerate(self._itemcol):
             for A in range(len(self.nonterminal_symbols)):
@@ -332,17 +322,9 @@ class GrammarSlr(GrammarBase):
                     self._table_goto[i, A] = j
                 except ValueError:
                     pass  # Do nothing
-        pr.disable()
-        pr.print_stats()
-
-        print('AE: %s' % (time.time(), ))
 
     def compile(self):
-        pr = profile.Profile()
-        pr.enable()
         self._itemcol = self._compute_itemcol()
-        pr.disable()
-        pr.print_stats()
         if not self._follow_map:  # TODO
             self._compute_follows()
         self.generate_analysis_table()
