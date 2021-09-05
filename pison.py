@@ -347,15 +347,15 @@ class Parser(metaclass=MetaParser):
                 continue
 
             if action_type == 2:
-                if logger:
-                    logger.debug('Action::Reduce')
-
                 # reduce symbols on the stack with a production
                 prod_idx = action_value
                 prod_exp = cls._prods[prod_idx]
                 prod_right_length = len(prod_exp) - 1
                 prod_left = prod_exp[0]
                 prod_left_idx = cls._nonterminals.index(prod_left)
+
+                if logger:
+                    logger.debug('Action::Reduce with (%d) %r' % (prod_idx, prod_exp))
 
                 tslice = [None]
                 if prod_right_length > 0:

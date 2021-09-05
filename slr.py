@@ -44,9 +44,12 @@ class GrammarSlr(GrammarBase):
 
         self._compute_prod_index()
 
-    def _first(self, X, lookup_cache=True):
+    def _first(self, X, lookup_cache=True, trace=None):
         if lookup_cache and X in self._first_map:
             return self._first_map[X]
+
+        if trace is None:
+            trace = []
 
         if X in self.terminal_symbols:
             fst = self._first_map[X] = [X]
@@ -60,20 +63,20 @@ class GrammarSlr(GrammarBase):
                 fst.append(None)
                 continue
             # Remember to skip left-recursive productions
-            fst += self._first_beta(p[1:], left=X)
+            fst += self._first_beta(p[1:], left=X, trace=trace+[X])
 
         self._first_map[X] = fst
         return fst
 
-    def _first_beta(self, beta, left=None):
+    def _first_beta(self, beta, left=None, trace=None):
         ret = []
         for X in beta:
-            if X == left:
+            if X == left or (trace is not None and X in trace):
                 break
                 # TODO: Consider the following productions:
                 #   exp -> exp RIGHT
                 #   exp -> None
-            X_first = self._first(X)
+            X_first = self._first(X, trace=trace)
             ret += (s for s in X_first if s is not None)
             if None not in X_first:
                 break
