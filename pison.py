@@ -1,3 +1,4 @@
+import time
 from com import AUG_SYMBOL_EOF, AUG_SYMBOL_SI, AUG_SYMBOL_ERROR
 from slr import GrammarSlr
 
@@ -162,7 +163,8 @@ class MetaParser(type):
     def __init__(cls, name, bases, namespace, **kwds):
         meta = cls.__class__
         store = meta.stores[name]
-        is_base = len(bases) == 0
+        if len(bases) == 0:
+            return  # do not compile the base class.
 
         # Set productions
         cls._prods = store.prods
@@ -228,13 +230,14 @@ class MetaParser(type):
                 raise ValueError('%prec symbol is not assigned with precedence.')
 
         # Generate the grammar table
-        if not is_base:
-            grm = cls.grammar = GrammarSlr()
-            grm.set_grammar(prods=cls._prods,
-                            terminal_symbols=cls._terminals,
-                            nonterminal_symbols=cls._nonterminals,
-                            precedence_map=cls._precedence_map)
-            grm.generate_analysis_table()
+        grm = cls.grammar = GrammarSlr()
+        grm.set_grammar(prods=cls._prods,
+                        terminal_symbols=cls._terminals,
+                        nonterminal_symbols=cls._nonterminals,
+                        precedence_map=cls._precedence_map)
+        print('A: %s' % (time.time(), ))
+        grm.compile()
+        print('B: %s' % (time.time(), ))
 
         # Register error handler routine
         if hasattr(cls, 'error'):
