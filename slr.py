@@ -1,3 +1,5 @@
+import time
+import cProfile as profile
 from com import AUG_SYMBOL_EOF
 
 
@@ -129,16 +131,26 @@ class GrammarSlr(GrammarBase):
 
     def closure(self, I):  # noqa: E741
         J = I[:]
+
+        # Mark whether (prod_idx, 1) has existed.
+        new_item_mark = bytearray(len(self.prods) // 8 + 1)
+        for prod_idx, dot_pos in J:
+            if dot_pos == 1:
+                new_item_mark[prod_idx//8] |= 1 << prod_idx % 8
+
+        # Loop to extend I
         v, w = 0, len(J)
         while v < w:
             prod_idx, dot_pos = J[v]
             prod_exp = self.prods[prod_idx]
             if dot_pos < len(prod_exp) and (asym := prod_exp[dot_pos]) in self._prod_index:
                 for p_idx in self._prod_index[asym]:
-                    if (new_item := (p_idx, 1)) not in J:
-                        J.append(new_item)
+                    if not new_item_mark[p_idx//8] & (1 << p_idx % 8):
+                        J.append((p_idx, 1))
                         w += 1
+                        new_item_mark[p_idx//8] |= 1 << p_idx % 8
             v += 1
+
         J.sort()
         return J
 
@@ -170,14 +182,11 @@ class GrammarSlr(GrammarBase):
                 if len(g) > 0 and g not in C:
                     C.append(g)
                     w += 1
+
             v += 1
         return C
 
     def generate_analysis_table(self):
-        self._itemcol = self._compute_itemcol()
-        if not self._follow_map:  # TODO
-            self._compute_follows()
-
         number_of_state = len(self._itemcol)
         number_of_nonterminal_symbols = len(self.nonterminal_symbols)
         number_of_terminal_symbols = len(self.terminal_symbols)
@@ -187,6 +196,8 @@ class GrammarSlr(GrammarBase):
         self._table_action = memoryview(bytearray(x * y * 4)).cast('L', (x, y))
         x, y = number_of_state, number_of_nonterminal_symbols
         self._table_goto = memoryview(bytearray(x * y * 4)).cast('L', (x, y))
+
+        print('AC: %s' % (time.time(), ))
 
         def get_precedence_key_terminal(prod):
             if prod.prec:
@@ -286,6 +297,8 @@ class GrammarSlr(GrammarBase):
                 else:
                     pass
 
+        print('AD: %s' % (time.time(), ))
+
         # Set GOTO table for each state
         for i, itemset_i in enumerate(self._itemcol):
             for A_idx, A in enumerate(self.nonterminal_symbols):
@@ -295,6 +308,19 @@ class GrammarSlr(GrammarBase):
                     self._table_goto[i, A_idx] = j
                 else:
                     pass  # Do nothing
+
+        print('AE: %s' % (time.time(), ))
+
+    def compile(self):
+        pr = profile.Profile()
+        pr.enable()
+        self._itemcol = self._compute_itemcol()
+        pr.disable()
+        pr.print_stats()
+        # assert False
+        if not self._follow_map:  # TODO
+            self._compute_follows()
+        self.generate_analysis_table()
 
     def stringify_item_collection(self, item_collection):
         ret = []
