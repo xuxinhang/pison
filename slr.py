@@ -26,6 +26,8 @@ class GrammarSlr(GrammarBase):
         self._table_goto = None
         self._table_action = None
 
+        self._goto_cache = {}
+
     def set_grammar(self, *, prods=None,
                     terminal_symbols=None, nonterminal_symbols=None,
                     precedence_map=None,
@@ -161,12 +163,20 @@ class GrammarSlr(GrammarBase):
         return J
 
     def goto(self, I, X):  # noqa: E741
+        cache_key = (id(I), X)
+        if cache_key in self._goto_cache:
+            return self._goto_cache[cache_key]
+
         J = []
         for prod_idx, dot_pos in I:
             prod_exp = self.abs_prods[prod_idx]
             if dot_pos < len(prod_exp) and prod_exp[dot_pos] == X:
                 J.append((prod_idx, dot_pos + 1))
-        return self.closure(J)
+
+        JJ = self.closure(J)
+        self._goto_cache[cache_key] = JJ
+        return JJ
+
 
     def _compute_itemcol(self):
         C = [self.closure([(0, 1)])]
@@ -272,6 +282,8 @@ class GrammarSlr(GrammarBase):
             return solve_conflict(prev_action, next_action,
                                  self.terminal_symbols[~coming_terminal])
 
+        pr = profile.Profile()
+        pr.enable()
         # Set ACTION table for each state
         for i, itemset_i in enumerate(self._itemcol):
             for prod_idx, dot_pos in itemset_i:
@@ -301,18 +313,27 @@ class GrammarSlr(GrammarBase):
                 else:
                     # Each cell is set with "0" by default.
                     pass
+        pr.disable()
+        pr.print_stats()
 
         print('AD: %s' % (time.time(), ))
 
+        pr = profile.Profile()
+        pr.enable()
         # Set GOTO table for each state
         for i, itemset_i in enumerate(self._itemcol):
             for A in range(len(self.nonterminal_symbols)):
+                if (id(itemset_i), A) not in self._goto_cache:
+                    # we assert the return value of "goto(itemset_i, A)" is not in "_itemcol"
+                    continue
                 itemset_j = self.goto(itemset_i, A)
-                if itemset_j in self._itemcol:
+                try:
                     j = self._itemcol.index(itemset_j)
                     self._table_goto[i, A] = j
-                else:
+                except ValueError:
                     pass  # Do nothing
+        pr.disable()
+        pr.print_stats()
 
         print('AE: %s' % (time.time(), ))
 
@@ -322,7 +343,6 @@ class GrammarSlr(GrammarBase):
         self._itemcol = self._compute_itemcol()
         pr.disable()
         pr.print_stats()
-        # assert False
         if not self._follow_map:  # TODO
             self._compute_follows()
         self.generate_analysis_table()
