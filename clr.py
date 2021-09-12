@@ -90,7 +90,7 @@ class GrammarClr(GrammarBase):
         J = []
         for prod, dot_pos, lasym in I:
             prod_exp = self.prods[prod]
-            if prod_exp[dot_pos] == X:
+            if dot_pos < len(prod_exp) and prod_exp[dot_pos] == X:
                 J.append((prod, dot_pos+1, lasym))
         return self.closure(J)
 
@@ -118,6 +118,44 @@ class GrammarClr(GrammarBase):
         self.itemset_collection = C  # "collection"?
         return C
 
+    def construct_table(self):
+        itemset_collection = self.itemset_collection
+
+        n_s = len(self.itemset_collection)
+        n_t = len(self.terminals)
+        n_n = len(self.nonterminals)
+        table_action = self._table_action =\
+            memoryview(bytearray(n_s * n_t * 4)).cast('L', (n_s, n_t))
+        table_goto = self._table_goto =\
+            memoryview(bytearray(n_s * n_n * 4)).cast('L', (n_s, n_n))
+
+        for i, I_i in enumerate(itemset_collection):
+            for prod, dot_pos, lasym in I_i:
+                prod_exp = self.prods[prod]
+                # case: shift
+                if dot_pos < len(prod_exp) and (a := prod_exp[dot_pos]) < 0:
+                    I_j = self.goto(I_i, prod_exp[dot_pos])
+                    j = itemset_collection.index(I_j)
+                    table_action[i, ~a] = j << 2 | 3
+                # case: accept
+                elif dot_pos == len(prod_exp)\
+                    and prod_exp[0] == 0 and lasym == self.terminal_map['EOF']:
+                    table_action[i, ~lasym] = 1
+                # case: reduce
+                elif dot_pos == len(prod_exp):
+                    table_action[i, ~lasym] = prod << 2 | 2
+                else:
+                    pass
+
+        for i, I_i in enumerate(itemset_collection):
+            for A in range(len(self.nonterminals)):
+                I_j = self.goto(I_i, A)
+                try:
+                    j = itemset_collection.index(I_j)
+                    table_goto[i, A] = j
+                except ValueError:
+                    pass  # Do nothing
+
     def stringify_item(self, item):
         prod, dot_pos, lasym = item
         prod_exp = self.prods[prod]
@@ -140,6 +178,54 @@ class GrammarClr(GrammarBase):
         for i, itemset in enumerate(self.itemset_collection):
             print(f'C[{i}]')
             print(*(' '*4 + self.stringify_item(t) for t in itemset), sep='\n')
+
+    def print_analysis_table(self, terminal_formatter=lambda x: x):
+        if self._table_action is None or self._table_goto is None:
+            return
+
+        size_state, size_action = self._table_action.shape
+        _, size_goto = self._table_goto.shape
+
+        def str_val(n):
+            if n & 3 == 0:
+                return ''
+            elif n & 3 == 1:
+                return 'acc'
+            elif n & 3 == 2:
+                return 'r' + str(n >> 2)
+            elif n & 3 == 3:
+                return 's' + str(n >> 2)
+
+        table_str_list = []
+
+        def format_terminal(t):
+            if not getattr(t, '_augmented', False):
+                t = terminal_formatter(t)
+            return f'{t:<8}'
+
+        table_header_str = '    | '
+        table_header_str += ' '.join(map(format_terminal, self.terminals))
+        table_header_str += ' | '
+        table_header_str += ' '.join(f'{x:<8}' for x in self.nonterminals)
+        table_str_list.append('-' * len(table_header_str))
+        table_str_list.append(table_header_str)
+        table_str_list.append('-' * len(table_header_str))
+
+        for i in range(size_state):
+            table_body_str = f'{i:>3} | '
+            table_body_str += ' '.join(
+                '{:<8}'.format(str_val(self._table_action[i, j]))
+                for j in range(size_action))
+            table_body_str += ' | '
+            table_body_str += ' '.join(
+                '{:<8}'.format(self._table_goto[i, j] or '')
+                for j in range(size_goto))
+            table_str_list.append(table_body_str)
+
+        table_str_list.append('-' * len(table_header_str))
+
+        final_str = '\n'.join(table_str_list)
+        print(final_str)
 
 
 ### Test Fixture ###
@@ -189,4 +275,7 @@ grm.set_grammar(productions=grm_productions,
                 nonterminals=grm_nonterminals)
 grm.items()
 grm.print_itemset_collection()
+
+grm.construct_table()
+grm.print_analysis_table()
 
