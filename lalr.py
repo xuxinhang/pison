@@ -202,8 +202,8 @@ class GrammarLalr(GrammarBase):
         itemset_transition_track = self.itemset_transition_track
 
         kernel_collection = self.itemset_kernel_collection_lr0
-        lookahead_generate_table = [[[] for _ in K ] for K in kernel_collection]
-        lookahead_propagate_table = [[[] for _ in K ] for K in kernel_collection]
+        lookahead_generate_table = [[[] for _ in K] for K in kernel_collection]
+        lookahead_propagate_table = [[[] for _ in K] for K in kernel_collection]
 
         symbol_propagate_placeholder = self.terminal_map['propagate_placeholder']
 
@@ -214,7 +214,7 @@ class GrammarLalr(GrammarBase):
                 print(*map(lambda i: self.stringify_item_lr1(i), J), sep='\n')
                 for prod, dot_pos, a in J:
                     prod_exp = self.prods[prod]
-                    if dot_pos >= len(prod_exp): 
+                    if dot_pos >= len(prod_exp):
                         continue
                     X = prod_exp[dot_pos]
                     goto_kernel_idx = itemset_transition_track[K_idx][X]
@@ -310,64 +310,4 @@ class GrammarLalr(GrammarBase):
                 for target in propagate_targets:
                     target_item = kernel_collection[target[0]][target[1]]
                     print('        I%d:  %s' % (target[0], self.stringify_item_lr0(target_item)))
-
-
-### Test Fixture ###
-from enum import Enum
-from com import AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR
-
-
-class SN(Enum):
-    SS = 100
-    S = 101
-    L = 102
-    R = 103
-
-
-class ST(Enum):
-    ID = 201
-    EQ = 202
-    STAR = 203
-
-
-ex_productions = [
-    (SN.SS, SN.S),
-    (SN.S, SN.L, ST.EQ, SN.R),
-    (SN.S, SN.R),
-    (SN.L, ST.STAR, SN.R),
-    (SN.L, ST.ID),
-    (SN.R, SN.L),
-]
-
-
-def digitalize_production(prod, terminals=[], nonterminals=[]):
-    def dg(s):
-        try:
-            return nonterminals.index(s)
-        except Exception:
-            return ~terminals.index(s)
-
-    return tuple(map(dg, prod))
-
-
-grm_terminals =  [AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR] + list(ST)
-grm_nonterminals = list(SN)
-grm_productions = list(map(
-    lambda p: digitalize_production(p, terminals=grm_terminals, nonterminals=grm_nonterminals),
-    ex_productions
-))
-
-grm = GrammarLalr()
-grm.set_grammar(productions=grm_productions,
-                terminals=grm_terminals,
-                nonterminals=grm_nonterminals)
-grm.items_lr0()
-grm.print_itemset_collection_lr0()
-grm.print_itemset_kernel_collection_lr0()
-
-grm.items()
-grm.attach_lookahead()
-grm.print_lookahead_propagate_table()
-
-
 

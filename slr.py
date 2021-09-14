@@ -1,5 +1,3 @@
-import time
-import cProfile as profile
 from com import AUG_SYMBOL_EOF
 
 
@@ -177,7 +175,6 @@ class GrammarSlr(GrammarBase):
         self._goto_cache[cache_key] = JJ
         return JJ
 
-
     def _compute_itemcol(self):
         C = [self.closure([(0, 1)])]
         v, w = 0, len(C)
@@ -278,7 +275,7 @@ class GrammarSlr(GrammarBase):
             if prev_action == 0:
                 return next_action
             return solve_conflict(prev_action, next_action,
-                                 self.terminal_symbols[~coming_terminal])
+                                  self.terminal_symbols[~coming_terminal])
 
         # Set ACTION table for each state
         for i, itemset_i in enumerate(self._itemcol):

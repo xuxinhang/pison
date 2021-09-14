@@ -243,7 +243,7 @@ class MetaParser(type):
                         terminal_symbols=cls._terminals,
                         nonterminal_symbols=cls._nonterminals,
                         precedence_map=cls._precedence_map,
-                        abs_prods = cls._abs_prods),
+                        abs_prods=cls._abs_prods),
         grm.compile()
 
         # Register error handler routine

@@ -102,7 +102,7 @@ class GrammarClr(GrammarBase):
             I = C[v]
             # seek possible goto symbol
             dot_symbols = []
-            for prod, dot_pos, lasym in I:
+            for prod, dot_pos, _ in I:
                 prod_exp = self.prods[prod]
                 if dot_pos < len(prod_exp):
                     if (s := prod_exp[dot_pos]) not in dot_symbols:
@@ -138,8 +138,8 @@ class GrammarClr(GrammarBase):
                     j = itemset_collection.index(I_j)
                     table_action[i, ~a] = j << 2 | 3
                 # case: accept
-                elif dot_pos == len(prod_exp)\
-                    and prod_exp[0] == 0 and lasym == self.terminal_map['EOF']:
+                elif dot_pos == len(prod_exp) and\
+                        prod_exp[0] == 0 and lasym == self.terminal_map['EOF']:
                     table_action[i, ~lasym] = 1
                 # case: reduce
                 elif dot_pos == len(prod_exp):
@@ -227,55 +227,4 @@ class GrammarClr(GrammarBase):
         final_str = '\n'.join(table_str_list)
         print(final_str)
 
-
-### Test Fixture ###
-from enum import Enum
-from com import AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR
-
-
-class SN(Enum):
-    SS = 100
-    S = 101
-    C = 102
-
-
-class ST(Enum):
-    c = 201
-    d = 202
-
-
-ex_productions = [
-    (SN.SS, SN.S),
-    (SN.S, SN.C, SN.C),
-    (SN.C, ST.c, SN.C),
-    (SN.C, ST.d)
-]
-
-
-def digitalize_production(prod, terminals=[], nonterminals=[]):
-    def dg(s):
-        try:
-            return nonterminals.index(s)
-        except Exception:
-            return ~terminals.index(s)
-
-    return tuple(map(dg, prod))
-
-
-grm_terminals =  [AUG_SYMBOL_EOF, AUG_SYMBOL_ERROR] + list(ST)
-grm_nonterminals = list(SN)
-grm_productions = list(map(
-    lambda p: digitalize_production(p, terminals=grm_terminals, nonterminals=grm_nonterminals),
-    ex_productions
-))
-
-grm = GrammarClr()
-grm.set_grammar(productions=grm_productions,
-                terminals=grm_terminals,
-                nonterminals=grm_nonterminals)
-grm.items()
-grm.print_itemset_collection()
-
-grm.construct_table()
-grm.print_analysis_table()
 
