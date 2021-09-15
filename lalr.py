@@ -224,8 +224,26 @@ class GrammarLalr(GrammarBase):
                     else:
                         lookahead_generate_table[goto_kernel_idx][target_idx].append(a)
 
+        for _ in lookahead_generate_table[0]:
+            _.append(self.terminal_map['EOF'])
+
         self.lookahead_generate_table = lookahead_generate_table
         self.lookahead_propagate_table = lookahead_propagate_table
+
+    def propagate_lookahead(self):
+        lookahead_generate_table = self.lookahead_generate_table
+        lookahead_propagate_table = self.lookahead_propagate_table
+
+        cnt = 1
+        while cnt:
+            cnt = 0
+            for K, propagate_table_K in enumerate(lookahead_propagate_table):
+                for item, propagate_table_K_item in enumerate(propagate_table_K):
+                    for target_kernel, target_item in propagate_table_K_item:
+                        for s in lookahead_generate_table[K][item]:
+                            if s not in lookahead_generate_table[target_kernel][target_item]:
+                                lookahead_generate_table[target_kernel][target_item].append(s)
+                                cnt += 1
 
     def items(self):
         K = [(0, 1)]
@@ -310,4 +328,14 @@ class GrammarLalr(GrammarBase):
                 for target in propagate_targets:
                     target_item = kernel_collection[target[0]][target[1]]
                     print('        I%d:  %s' % (target[0], self.stringify_item_lr0(target_item)))
+
+    def print_lookahead_generate_table(self):
+        table = self.lookahead_generate_table
+        kernel_collection = self.itemset_kernel_collection_lr0
+        for K, table_K in enumerate(table):
+            for item, table_K_item in enumerate(table_K):
+                print('I%d: %s : %s' % (K,
+                                        self.stringify_item_lr0(kernel_collection[K][item]),
+                                        ' / '.join(str(self.terminals[~s]) for s in table_K_item)))
+
 

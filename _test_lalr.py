@@ -55,4 +55,8 @@ grm.print_itemset_kernel_collection_lr0()
 grm.items()
 grm.attach_lookahead()
 grm.print_lookahead_propagate_table()
+grm.print_lookahead_generate_table()
+
+grm.propagate_lookahead()
+grm.print_lookahead_generate_table()
 
