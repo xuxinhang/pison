@@ -48,12 +48,12 @@ grm = GrammarLalr()
 grm.set_grammar(productions=grm_productions,
                 terminals=grm_terminals,
                 nonterminals=grm_nonterminals)
-grm.items_lr0()
-grm.print_itemset_collection_lr0()
-grm.print_itemset_kernel_collection_lr0()
 
-grm.items()
-grm.attach_lookahead()
+grm.items_lr0()
+grm.print_lr0_itemset_collection()
+grm.print_lr0_kernel_collection()
+
+grm.discover_lookahead()
 grm.print_lookahead_propagate_table()
 grm.print_lookahead_generate_table()
 
