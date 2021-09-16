@@ -246,6 +246,17 @@ class GrammarLalr(GrammarBase):
         I.sort(key=lambda t: (t[0], t[1], ~t[2]))
         return I
 
+    def lr1_items(self):
+        lr1_itemset_collection = []
+
+        for kernel, lasyms in zip(self.kernel_collection, self.lookahead_generate_table):
+            attached_kernel = []
+            for item, las in zip(kernel, lasyms):
+                attached_kernel += ((*item, s) for s in las)
+            lr1_itemset_collection.append(self.closure(attached_kernel))
+
+        self.lr1_itemset_collection = lr1_itemset_collection
+
     # ---------
     # DEBUG: format printer
     # ---------
@@ -306,5 +317,10 @@ class GrammarLalr(GrammarBase):
                 print('I%d: %s : %s' % (K,
                                         self.stringify_lr0_item(kernel_collection[K][item]),
                                         ' / '.join(str(self.terminals[~s]) for s in table_K_item)))
+
+    def print_lr1_itemset_collection(self):
+        for i, itemset in enumerate(self.lr1_itemset_collection):
+            print(f'C[{i}]')
+            print(*('    ' + self.stringify_lr1_item(t) for t in itemset), sep='\n')
 
 
