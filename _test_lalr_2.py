@@ -57,3 +57,7 @@ grm.print_lookahead_generate_table()
 
 grm.lr1_items()
 grm.print_lr1_itemset_collection()
+
+grm.construct_parsing_table()
+grm.print_parsing_table()
+

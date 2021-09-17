@@ -257,6 +257,62 @@ class GrammarLalr(GrammarBase):
 
         self.lr1_itemset_collection = lr1_itemset_collection
 
+    def construct_parsing_table(self):
+        number_of_states = len(self.lr1_itemset_collection)
+        number_of_nonterminals = len(self.nonterminals)
+        number_of_terminals = len(self.terminals)
+
+        # Initialize table storage space.
+        def create_table(x, y):
+            return memoryview(bytearray(x * y * 4)).cast('L', (x, y))
+
+        self.parsing_table_action = create_table(number_of_states, number_of_terminals)
+        self.parsing_table_goto = create_table(number_of_states, number_of_nonterminals)
+
+        # Construct ACTION table for each state
+        def update_cell_action(prev_action, next_action, coming_terminal):
+            if prev_action == next_action:
+                return next_action
+            if prev_action == 0:
+                return next_action
+            raise RuntimeError('Parsing table error')
+            # return solve_conflict(prev_action, next_action,
+            #                       self.terminal_symbols[~coming_terminal])
+
+        for i, I in enumerate(self.lr1_itemset_collection):
+            for prod_idx, dot_pos, las in I:
+                prod_exp = self.prods[prod_idx]
+
+                # case 1) shift
+                if dot_pos < len(prod_exp) and prod_exp[dot_pos] < 0:
+                    a = prod_exp[dot_pos]
+                    j = self.goto_track[i][a]
+                    self.parsing_table_action[i, ~a] =\
+                        update_cell_action(self.parsing_table_action[i, ~a], j << 2 | 3, a)
+
+                # case 2) accept
+                elif prod_exp[0] == 0 and dot_pos == len(prod_exp):
+                    a = self.terminal_map['EOF']
+                    self.parsing_table_action[i, ~a] =\
+                        update_cell_action(self.parsing_table_action[i, ~a], 1, a)
+
+                # case 3) reduce
+                elif dot_pos == len(prod_exp):
+                    a = las
+                    self.parsing_table_action[i, ~a] =\
+                        update_cell_action(self.parsing_table_action[i, ~a],
+                                           prod_idx << 2 | 2, a)
+
+                # case 4) error
+                else:
+                    pass  # Each cell is set with "0" by default.
+
+        # Construct GOTO table for each state
+        for i in range(len(self.lr1_itemset_collection)):
+            for A, j in self.goto_track[i].items():
+                if A >= 0:
+                    self.parsing_table_goto[i, A] = j
+
     # ---------
     # DEBUG: format printer
     # ---------
@@ -322,5 +378,49 @@ class GrammarLalr(GrammarBase):
         for i, itemset in enumerate(self.lr1_itemset_collection):
             print(f'C[{i}]')
             print(*('    ' + self.stringify_lr1_item(t) for t in itemset), sep='\n')
+
+    def print_parsing_table(self, terminal_formatter=lambda x: x):
+        size_state, size_action = self.parsing_table_action.shape
+        _, size_goto = self.parsing_table_goto.shape
+
+        def str_val(n):
+            if n & 3 == 0:
+                return ''
+            elif n & 3 == 1:
+                return 'acc'
+            elif n & 3 == 2:
+                return 'r' + str(n >> 2)
+            elif n & 3 == 3:
+                return 's' + str(n >> 2)
+
+        table_str_list = []
+
+        def format_terminal(t):
+            if not getattr(t, '_augmented', False):
+                t = terminal_formatter(t)
+            return f'{t:<8}'
+
+        table_header_str = '    | '
+        table_header_str += ' '.join(map(format_terminal, self.terminals))
+        table_header_str += ' | '
+        table_header_str += ' '.join(f'{x:<8}' for x in self.nonterminals)
+        table_str_list.append('-' * len(table_header_str))
+        table_str_list.append(table_header_str)
+        table_str_list.append('-' * len(table_header_str))
+
+        for i in range(size_state):
+            table_body_str = f'{i:>3} | '
+            table_body_str += ' '.join(
+                '{:<8}'.format(str_val(self.parsing_table_action[i, j]))
+                for j in range(size_action))
+            table_body_str += ' | '
+            table_body_str += ' '.join(
+                '{:<8}'.format(self.parsing_table_goto[i, j] or '')
+                for j in range(size_goto))
+            table_str_list.append(table_body_str)
+
+        table_str_list.append('-' * len(table_header_str))
+
+        print('\n'.join(table_str_list))
 
 
