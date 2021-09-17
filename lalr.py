@@ -122,8 +122,8 @@ class GrammarLalr(GrammarBase):
 
     def goto_lr0(self, I, X, *, kernel=False):
         cache_key = (id(I), X)  # TODO
-        # if cache_key in self._goto_cache:
-        #     return self._goto_cache[cache_key]
+        if cache_key in self._goto_cache:
+            return self._goto_cache[cache_key]
 
         J = []
         for prod_idx, dot_pos in I:
@@ -258,23 +258,27 @@ class GrammarLalr(GrammarBase):
         self.lr1_itemset_collection = lr1_itemset_collection
 
     def construct_parsing_table(self):
-        number_of_states = len(self.lr1_itemset_collection)
-        number_of_nonterminals = len(self.nonterminals)
-        number_of_terminals = len(self.terminals)
-
         # Initialize table storage space.
         def create_table(x, y):
             return memoryview(bytearray(x * y * 4)).cast('L', (x, y))
 
-        self.parsing_table_action = create_table(number_of_states, number_of_terminals)
-        self.parsing_table_goto = create_table(number_of_states, number_of_nonterminals)
+        state_number = len(self.lr1_itemset_collection)
+        self.parsing_table_action = create_table(state_number, len(self.terminals))
+        self.parsing_table_goto = create_table(state_number, len(self.nonterminals))
 
         # Construct ACTION table for each state
-        def update_cell_action(prev_action, next_action, coming_terminal):
+        table_action = self.parsing_table_action
+
+        def update_action(i, a, next_action, coming_terminal):
+            prev_action = table_action[i, ~a]
+
             if prev_action == next_action:
-                return next_action
+                return
+
             if prev_action == 0:
-                return next_action
+                table_action[i, ~a] = next_action
+                return
+
             raise RuntimeError('Parsing table error')
             # return solve_conflict(prev_action, next_action,
             #                       self.terminal_symbols[~coming_terminal])
@@ -287,21 +291,17 @@ class GrammarLalr(GrammarBase):
                 if dot_pos < len(prod_exp) and prod_exp[dot_pos] < 0:
                     a = prod_exp[dot_pos]
                     j = self.goto_track[i][a]
-                    self.parsing_table_action[i, ~a] =\
-                        update_cell_action(self.parsing_table_action[i, ~a], j << 2 | 3, a)
+                    update_action(i, a, j << 2 | 3, a)
 
                 # case 2) accept
                 elif prod_exp[0] == 0 and dot_pos == len(prod_exp):
                     a = self.terminal_map['EOF']
-                    self.parsing_table_action[i, ~a] =\
-                        update_cell_action(self.parsing_table_action[i, ~a], 1, a)
+                    update_action(i, a, 1, a)
 
                 # case 3) reduce
                 elif dot_pos == len(prod_exp):
                     a = las
-                    self.parsing_table_action[i, ~a] =\
-                        update_cell_action(self.parsing_table_action[i, ~a],
-                                           prod_idx << 2 | 2, a)
+                    update_action(i, a, prod_idx << 2 | 2, a)
 
                 # case 4) error
                 else:
