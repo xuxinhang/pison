@@ -1,8 +1,4 @@
-from com import AUG_SYMBOL_EOF
-
-
-class GrammarError(Exception):
-    pass
+from com import AUG_SYMBOL_EOF, GrammarError
 
 
 class GrammarBase():

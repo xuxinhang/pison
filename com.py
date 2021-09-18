@@ -16,3 +16,9 @@ class AugmentedSymbol:
 AUG_SYMBOL_EOF = AugmentedSymbol('$end')
 AUG_SYMBOL_SI = AugmentedSymbol('S\'')
 AUG_SYMBOL_ERROR = AugmentedSymbol('error')
+
+
+class GrammarError(Exception):
+    pass
+
+

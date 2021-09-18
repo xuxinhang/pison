@@ -1,4 +1,4 @@
-from com import AUG_SYMBOL_EOF
+from com import AUG_SYMBOL_EOF, GrammarError
 
 
 class GrammarBase():
@@ -24,10 +24,13 @@ class GrammarLalr(GrammarBase):
         # helper cache
         self._goto_cache = {}
 
-    def set_grammar(self, *, productions, terminals, nonterminals):
+    def set_grammar(self, *,
+                    productions, terminals, nonterminals,
+                    precedence_map=None):
         self.prods = productions[:]
         self.terminals = terminals[:]
         self.nonterminals = nonterminals[:]
+        self.precedence_map = {} if precedence_map is None else precedence_map.copy()
 
         # prepare useful cache
         self._prod_map = [[] for _ in self.nonterminals]
@@ -269,40 +272,86 @@ class GrammarLalr(GrammarBase):
         # Construct ACTION table for each state
         table_action = self.parsing_table_action
 
-        def update_action(i, a, next_action, coming_terminal):
-            prev_action = table_action[i, ~a]
+        def get_production_precedence_terminal(prod):
+            # prod_object = self._original_productions[prod]
+            prod_object = self.prods[prod]  # HACK
+            if prod_object.prec is not None:
+                return prod_object.prec
 
+            prod_exp = self.prods[prod]
+            for s in reversed(prod_exp):
+                if s < 0:
+                    return self.terminals[~s]
+            else:
+                return None
+
+        def solve_conflict(prev_action, next_action, coming_terminal=None):
+            DEFAULT_PRECEDENCE = (None, 'right', 0)
+            prev_type, prev_value = (prev_action & 3), (prev_action >> 2)
+            next_type, next_value = (next_action & 3), (next_action >> 2)
+
+            # shift/shift conflict: is a grammar error
+            if prev_type == 3 and next_type == 3:
+                raise GrammarError('Unsolvable grammar conflict (shift/shift)')
+            # reduce/reduce conflict: use the first defined production
+            elif prev_type == 2 and next_type == 2:
+                return prev_action if prev_value < next_value else next_action
+            # reduce/shift conflict: compare precedence
+            elif prev_type == 2 and next_type == 3:
+                _, prev_assc, prev_level = self.precedence_map.get(
+                    get_production_precedence_terminal(prev_value), DEFAULT_PRECEDENCE)
+                _, next_assc, next_level = self.precedence_map.get(
+                    self.terminals[~coming_terminal], DEFAULT_PRECEDENCE)
+                if prev_level > next_level:
+                    return prev_action
+                elif prev_level < next_level:
+                    return next_action
+                else:  # two items with the same level always have the same assoc
+                    return prev_action if next_assc == 'left' else\
+                        next_action if next_assc == 'right' else 0
+            # shift/reduce conflict: compare precedence
+            elif prev_type == 3 and next_type == 2:
+                _, prev_assc, prev_level = self.precedence_map.get(
+                    self.terminals[~coming_terminal], DEFAULT_PRECEDENCE)
+                _, next_assc, next_level = self.precedence_map.get(
+                    get_production_precedence_terminal(next_value), DEFAULT_PRECEDENCE)
+                if prev_level > next_level:
+                    return prev_action
+                elif prev_level < next_level:
+                    return next_action
+                else:
+                    return next_action if next_assc == 'left' else\
+                        prev_action if next_assc == 'right' else 0
+            # any other conflict is unsolvable
+            else:
+                raise GrammarError('Unsolvable grammar conflict (*/*)')
+
+        def set_action(i, a, next_action, coming_terminal):
+            prev_action = table_action[i, ~a]
             if prev_action == next_action:
                 return
-
             if prev_action == 0:
                 table_action[i, ~a] = next_action
                 return
-
-            raise RuntimeError('Parsing table error')
-            # return solve_conflict(prev_action, next_action,
-            #                       self.terminal_symbols[~coming_terminal])
+            # there is a conflict between the old and the new actions
+            table_action[i, ~a] = solve_conflict(prev_action, next_action, coming_terminal)
 
         for i, I in enumerate(self.lr1_itemset_collection):
             for prod_idx, dot_pos, las in I:
                 prod_exp = self.prods[prod_idx]
-
                 # case 1) shift
                 if dot_pos < len(prod_exp) and prod_exp[dot_pos] < 0:
                     a = prod_exp[dot_pos]
                     j = self.goto_track[i][a]
-                    update_action(i, a, j << 2 | 3, a)
-
+                    set_action(i, a, j << 2 | 3, a)
                 # case 2) accept
                 elif prod_exp[0] == 0 and dot_pos == len(prod_exp):
                     a = self.terminal_map['EOF']
-                    update_action(i, a, 1, a)
-
+                    set_action(i, a, 1, a)
                 # case 3) reduce
                 elif dot_pos == len(prod_exp):
                     a = las
-                    update_action(i, a, prod_idx << 2 | 2, a)
-
+                    set_action(i, a, prod_idx << 2 | 2, a)
                 # case 4) error
                 else:
                     pass  # Each cell is set with "0" by default.
@@ -312,6 +361,13 @@ class GrammarLalr(GrammarBase):
             for A, j in self.goto_track[i].items():
                 if A >= 0:
                     self.parsing_table_goto[i, A] = j
+
+    def compile(self):
+        self.items_lr0()
+        self.discover_lookahead()
+        self.propagate_lookahead()
+        self.lr1_items()
+        self.construct_parsing_table()
 
     # ---------
     # DEBUG: format printer

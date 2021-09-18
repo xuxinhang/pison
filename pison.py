@@ -1,5 +1,4 @@
 from com import AUG_SYMBOL_EOF, AUG_SYMBOL_SI, AUG_SYMBOL_ERROR
-from slr import GrammarSlr
 
 
 class DefaultLogger(object):
@@ -143,6 +142,10 @@ def default_error_cb(self, msg):
     print(msg)  # TODO
 
 
+class AbsProductionTuple(tuple):
+    pass
+
+
 class MetaHelperStore(object):
     def __init__(self):
         self.prods = []
@@ -235,16 +238,34 @@ class MetaParser(type):
             except Exception:
                 return ~cls._terminals.index(s)
 
-        cls._abs_prods = [tuple(map(get_symbol_idx, p)) for p in cls._prods]
+        cls._abs_prods = []
+        for p in cls._prods:
+            a = AbsProductionTuple(map(get_symbol_idx, p))
+            a.prec = p.prec  # HACK
+            cls._abs_prods.append(a)
 
         # Generate the grammar table
-        grm = cls.grammar = GrammarSlr()
-        grm.set_grammar(prods=cls._prods,
-                        terminal_symbols=cls._terminals,
-                        nonterminal_symbols=cls._nonterminals,
-                        precedence_map=cls._precedence_map,
-                        abs_prods=cls._abs_prods),
-        grm.compile()
+        cls.grammar_engine = getattr(cls, 'grammar_engine', 'slr')
+        if cls.grammar_engine == 'slr':
+            from slr import GrammarSlr
+            grm = GrammarSlr()
+            grm.set_grammar(prods=cls._prods,
+                            terminal_symbols=cls._terminals,
+                            nonterminal_symbols=cls._nonterminals,
+                            precedence_map=cls._precedence_map,
+                            abs_prods=cls._abs_prods),
+            grm.compile()
+        elif cls.grammar_engine == 'lalr':
+            from lalr import GrammarLalr
+            grm = GrammarLalr()
+            grm.set_grammar(productions=cls._abs_prods,
+                            terminals=cls._terminals,
+                            nonterminals=cls._nonterminals,
+                            precedence_map=cls._precedence_map)
+            grm.compile()
+        else:
+            raise ValueError('An unknown grammar engine')
+        cls.grammar = grm
 
         # Register error handler routine
         if hasattr(cls, 'error'):
@@ -299,8 +320,16 @@ class Parser(metaclass=MetaParser):
     def parse(self, token_stream):
         cls = self.__class__
         logger = self.logger
-        grmtab_action = cls.grammar._table_action
-        grmtab_goto = cls.grammar._table_goto
+
+        if hasattr(cls.grammar, '_table_action'):  # TODO
+            grmtab_action = cls.grammar._table_action
+        elif hasattr(cls.grammar, 'parsing_table_action'):
+            grmtab_action = cls.grammar.parsing_table_action
+
+        if hasattr(cls.grammar, '_table_goto'):
+            grmtab_goto = cls.grammar._table_goto
+        elif hasattr(cls.grammar, 'parsing_table_goto'):
+            grmtab_goto = cls.grammar.parsing_table_goto
 
         state_stack = self.state_stack = [0]
         symbol_stack = self.symbol_stack = []
