@@ -100,24 +100,18 @@ class GrammarLalr(GrammarBase):
     # ---------------
     def closure_lr0(self, I):
         J = I[:]
+        mark = set()  # mark productions had been added to J
 
-        # Mark whether (prod_idx, 1) has existed.
-        new_item_mark = bytearray(len(self.prods) // 8 + 1)
-        for prod_idx, dot_pos in J:
-            if dot_pos == 1:
-                new_item_mark[prod_idx//8] |= 1 << prod_idx % 8
-
-        # Loop to extend I
         v, w = 0, len(J)
         while v < w:
             prod_idx, dot_pos = J[v]
             prod_exp = self.prods[prod_idx]
             if dot_pos < len(prod_exp) and prod_exp[dot_pos] >= 0:
                 for p_idx in self._prod_map[prod_exp[dot_pos]]:
-                    if not new_item_mark[p_idx//8] & (1 << p_idx % 8):
+                    if p_idx not in mark:
                         J.append((p_idx, 1))
                         w += 1
-                        new_item_mark[p_idx//8] |= 1 << p_idx % 8
+                        mark.add(p_idx)
             v += 1
 
         J.sort()
@@ -177,40 +171,81 @@ class GrammarLalr(GrammarBase):
         self.itemset_collection = C
         self.goto_track = goto_track
 
+    # ----------------
+    # Routines for LALR grammar
+    # ----------------
+    def lalr_closure(self, I):
+        I = I[:]
+        existed_item = {}
+
+        v, w = 0, len(I)
+        while v < w:
+            prod, dot_pos, las = I[v]
+            prod_exp = self.prods[prod]
+            if dot_pos < len(prod_exp):
+                if (dot_sym := prod_exp[dot_pos]) >= 0:
+                    # compute frist symbols as two parts:
+                    #   producted symbols at right of dot and lookahead symbols
+                    right_fst = self.first_beta(prod_exp[dot_pos+1:])
+                    total_fst = las[:] if None in right_fst else []
+                    for t in right_fst:
+                        if t is not None and t not in total_fst:
+                            total_fst.append(t)
+                    # stuff the lookahead list of lalr item
+                    for y in self._prod_map[dot_sym]:
+                        if y in existed_item:
+                            existed_las = I[existed_item[y]][2]
+                            for t in total_fst:
+                                if t not in existed_las:
+                                    existed_las.append(t)
+                        else:
+                            I.append((y, 1, total_fst))
+                            w += 1
+                            existed_item[y] = w - 1
+            v += 1
+
+        for item in I:
+            item[2].sort(reverse=True)
+        I.sort(key=lambda item: item[0:1])
+        return I
+
     # -----------------
     # Construct LALR itemset by attaching lookahead symbols to LR(0) itemset
     # -----------------
     def discover_lookahead(self):
-        goto_track = self.goto_track
-        kernel_collection = self.kernel_collection
-        propagate_placeholder = self.terminal_map['propagate_placeholder']
+        SHARP_SYMBOL = self.terminal_map['propagate_placeholder']
+        EOF_SYMBOL = self.terminal_map['EOF']
 
         # initialize tables
         propagate_table = self.lookahead_propagate_table\
-            = [[[] for _ in K] for K in kernel_collection]
-        generate_table = self.lookahead_generate_table\
-            = [[[] for _ in K] for K in kernel_collection]
-        for item in generate_table[0]:
-            item.append(self.terminal_map['EOF'])
+            = [[[] for _ in K] for K in self.kernel_collection]
+        kernel_collection = self.lalr_kernel_collection\
+            = [[(*kitem, []) for kitem in K] for K in self.kernel_collection]
+        for kitem in kernel_collection[0]:
+            kitem[2].append(EOF_SYMBOL)
 
         for K_idx, K in enumerate(kernel_collection):
-            for ki, (k_prod, k_dot_pos) in enumerate(K):
-                J = self.closure([(k_prod, k_dot_pos, propagate_placeholder)])
-                for prod, dot_pos, a in J:
+            for ki, (k_prod, k_dot_pos, _) in enumerate(K):
+                J = self.lalr_closure([(k_prod, k_dot_pos, [SHARP_SYMBOL])])
+                for prod, dot_pos, las in J:
                     prod_exp = self.prods[prod]
-                    if dot_pos >= len(prod_exp):
-                        continue
-                    X = prod_exp[dot_pos]
-                    target_kernel = goto_track[K_idx][X]
-                    target_item = kernel_collection[target_kernel].index((prod, dot_pos+1))
-                    if a == propagate_placeholder:
-                        propagate_table[K_idx][ki].append((target_kernel, target_item))
-                    else:
-                        generate_table[target_kernel][target_item].append(a)
+                    if dot_pos < len(prod_exp):
+                        X = prod_exp[dot_pos]
+                        p_kernel = self.goto_track[K_idx][X]
+                        p_item = next(idx for idx, e in enumerate(kernel_collection[p_kernel])
+                                      if e[0] == prod and e[1] == dot_pos+1)
+
+                        if SHARP_SYMBOL in las:
+                            propagate_table[K_idx][ki].append((p_kernel, p_item))
+
+                        p_las = kernel_collection[p_kernel][p_item][2]
+                        for s in las:
+                            if s is not None and s != SHARP_SYMBOL and s not in p_las:
+                                p_las.append(s)
 
     def propagate_lookahead(self):
-        generate_table = self.lookahead_generate_table
         propagate_table = self.lookahead_propagate_table
+        kernel_collection = self.lalr_kernel_collection
 
         cnt = 1  # trace how many symbols are propagated in a loop turn
         while cnt:
@@ -218,36 +253,12 @@ class GrammarLalr(GrammarBase):
             for source_kernel, propagate_table_kernel in enumerate(propagate_table):
                 for source_item, propagate_table_kernel_item in enumerate(propagate_table_kernel):
                     for target_kernel, target_item in propagate_table_kernel_item:
-                        source_lookahead_list = generate_table[source_kernel][source_item]
-                        target_lookahead_list = generate_table[target_kernel][target_item]
+                        source_lookahead_list = kernel_collection[source_kernel][source_item][2]
+                        target_lookahead_list = kernel_collection[target_kernel][target_item][2]
                         for s in source_lookahead_list:
                             if s not in target_lookahead_list:
                                 target_lookahead_list.append(s)
                                 cnt += 1
-
-    # ----------------
-    # Routines for LR(1) grammar
-    # ----------------
-    def closure(self, I):
-        I = I[:]
-
-        v, w = 0, len(I)
-        while v < w:
-            prod, dot_pos, lasym = I[v]
-            prod_exp = self.prods[prod]
-            if dot_pos < len(prod_exp):
-                firsts = self.first_beta((*prod_exp[dot_pos+1:], lasym))
-                dot_sym = prod_exp[dot_pos]
-                if dot_sym >= 0:
-                    dot_prods = self._prod_map[dot_sym]
-                    for y in dot_prods:
-                        for b in firsts:
-                            if (new_item := (y, 1, b)) not in I:
-                                I.append(new_item)
-                                w += 1
-            v += 1
-        I.sort(key=lambda t: (t[0], t[1], ~t[2]))
-        return I
 
     def lr1_items(self):
         lr1_itemset_collection = []
@@ -260,12 +271,16 @@ class GrammarLalr(GrammarBase):
 
         self.lr1_itemset_collection = lr1_itemset_collection
 
+    def lalr_items(self):
+        self.lalr_itemset_collection\
+            = list(map(self.lalr_closure, self.lalr_kernel_collection))
+
     def construct_parsing_table(self):
         # Initialize table storage space.
         def create_table(x, y):
             return memoryview(bytearray(x * y * 4)).cast('L', (x, y))
 
-        state_number = len(self.lr1_itemset_collection)
+        state_number = len(self.lalr_itemset_collection)
         self.parsing_table_action = create_table(state_number, len(self.terminals))
         self.parsing_table_goto = create_table(state_number, len(self.nonterminals))
 
@@ -336,7 +351,7 @@ class GrammarLalr(GrammarBase):
             # there is a conflict between the old and the new actions
             table_action[i, ~a] = solve_conflict(prev_action, next_action, coming_terminal)
 
-        for i, I in enumerate(self.lr1_itemset_collection):
+        for i, I in enumerate(self.lalr_itemset_collection):
             for prod_idx, dot_pos, las in I:
                 prod_exp = self.prods[prod_idx]
                 # case 1) shift
@@ -350,14 +365,14 @@ class GrammarLalr(GrammarBase):
                     set_action(i, a, 1, a)
                 # case 3) reduce
                 elif dot_pos == len(prod_exp):
-                    a = las
-                    set_action(i, a, prod_idx << 2 | 2, a)
+                    for a in las:
+                        set_action(i, a, prod_idx << 2 | 2, a)
                 # case 4) error
                 else:
                     pass  # Each cell is set with "0" by default.
 
         # Construct GOTO table for each state
-        for i in range(len(self.lr1_itemset_collection)):
+        for i in range(len(self.lalr_itemset_collection)):
             for A, j in self.goto_track[i].items():
                 if A >= 0:
                     self.parsing_table_goto[i, A] = j
@@ -366,7 +381,7 @@ class GrammarLalr(GrammarBase):
         self.items_lr0()
         self.discover_lookahead()
         self.propagate_lookahead()
-        self.lr1_items()
+        self.lalr_items()
         self.construct_parsing_table()
 
     # ---------
@@ -397,6 +412,12 @@ class GrammarLalr(GrammarBase):
         prod_exp = self.prods[prod]
         lasym_str = self.terminals[~lasym] if lasym < 0 else lasym
         return self.stringify_production(prod_exp, dot_pos) + ' , ' + str(lasym_str)
+
+    def stringify_lalr_item(self, item):
+        prod, dot_pos, las = item
+        prod_exp = self.prods[prod]
+        return self.stringify_production(prod_exp, dot_pos) + ' , '\
+            + '/'.join(str(self.terminals[~t]) for t in las)
 
     def print_lr0_itemset_collection(self):
         for i, itemset in enumerate(self.itemset_collection):
@@ -429,6 +450,16 @@ class GrammarLalr(GrammarBase):
                 print('I%d: %s : %s' % (K,
                                         self.stringify_lr0_item(kernel_collection[K][item]),
                                         ' / '.join(str(self.terminals[~s]) for s in table_K_item)))
+
+    def print_lalr_kernel_collection(self):
+        for i, itemset in enumerate(self.lalr_kernel_collection):
+            print(f'K[{i}]')
+            print(*('    ' + self.stringify_lalr_item(t) for t in itemset), sep='\n')
+
+    def print_lalr_itemset_collection(self):
+        for i, itemset in enumerate(self.lalr_itemset_collection):
+            print(f'C[{i}]')
+            print(*('    ' + self.stringify_lalr_item(t) for t in itemset), sep='\n')
 
     def print_lr1_itemset_collection(self):
         for i, itemset in enumerate(self.lr1_itemset_collection):

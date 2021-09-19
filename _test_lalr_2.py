@@ -50,13 +50,13 @@ grm.print_lr0_kernel_collection()
 
 grm.discover_lookahead()
 grm.print_lookahead_propagate_table()
-grm.print_lookahead_generate_table()
+grm.print_lalr_kernel_collection()
 
 grm.propagate_lookahead()
-grm.print_lookahead_generate_table()
+grm.print_lalr_kernel_collection()
 
-grm.lr1_items()
-grm.print_lr1_itemset_collection()
+grm.lalr_items()
+grm.print_lalr_itemset_collection()
 
 grm.construct_parsing_table()
 grm.print_parsing_table()

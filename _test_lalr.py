@@ -55,8 +55,8 @@ grm.print_lr0_kernel_collection()
 
 grm.discover_lookahead()
 grm.print_lookahead_propagate_table()
-grm.print_lookahead_generate_table()
+grm.print_lalr_kernel_collection()
 
 grm.propagate_lookahead()
-grm.print_lookahead_generate_table()
+grm.print_lalr_kernel_collection()
 
