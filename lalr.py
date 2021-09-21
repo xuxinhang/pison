@@ -15,7 +15,6 @@ class GrammarLalr(GrammarBase):
         # grammar itemset
         self.itemset_collection = None
         self.kernel_collection = None
-        self.lr1_itemset_collection = None
 
         # grammar parsing table
         self.parsing_table_goto = None
@@ -260,17 +259,6 @@ class GrammarLalr(GrammarBase):
                                 target_lookahead_list.append(s)
                                 cnt += 1
 
-    def lr1_items(self):
-        lr1_itemset_collection = []
-
-        for kernel, lasyms in zip(self.kernel_collection, self.lookahead_generate_table):
-            attached_kernel = []
-            for item, las in zip(kernel, lasyms):
-                attached_kernel += ((*item, s) for s in las)
-            lr1_itemset_collection.append(self.closure(attached_kernel))
-
-        self.lr1_itemset_collection = lr1_itemset_collection
-
     def lalr_items(self):
         self.lalr_itemset_collection\
             = list(map(self.lalr_closure, self.lalr_kernel_collection))
@@ -407,12 +395,6 @@ class GrammarLalr(GrammarBase):
         prod_exp = self.prods[prod]
         return self.stringify_production(prod_exp, dot_pos)
 
-    def stringify_lr1_item(self, item):
-        prod, dot_pos, lasym = item
-        prod_exp = self.prods[prod]
-        lasym_str = self.terminals[~lasym] if lasym < 0 else lasym
-        return self.stringify_production(prod_exp, dot_pos) + ' , ' + str(lasym_str)
-
     def stringify_lalr_item(self, item):
         prod, dot_pos, las = item
         prod_exp = self.prods[prod]
@@ -460,11 +442,6 @@ class GrammarLalr(GrammarBase):
         for i, itemset in enumerate(self.lalr_itemset_collection):
             print(f'C[{i}]')
             print(*('    ' + self.stringify_lalr_item(t) for t in itemset), sep='\n')
-
-    def print_lr1_itemset_collection(self):
-        for i, itemset in enumerate(self.lr1_itemset_collection):
-            print(f'C[{i}]')
-            print(*('    ' + self.stringify_lr1_item(t) for t in itemset), sep='\n')
 
     def print_parsing_table(self, terminal_formatter=lambda x: x):
         size_state, size_action = self.parsing_table_action.shape
