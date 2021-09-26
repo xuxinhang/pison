@@ -48,21 +48,23 @@ class GrammarLalr(GrammarBase):
     # ---------
     # Basic grammar routines
     # ---------
-    def _internal_first(self, is_beta, s):
+    def _run_first_session(self, is_beta, s):
         trace = []
 
         def first_single(X):
             if X < 0:
                 return [X]
-
             fst = []
             for prod in self._prod_map[X]:
                 prod_exp = self.prods[prod]
                 if len(prod_exp) == 1 or prod_exp[1] is None:
-                    fst.append(None)
+                    if None not in fst:
+                        fst.append(None)
                 else:
                     trace.append(X)
-                    fst += first_sequence(prod_exp[1:])
+                    for s in first_sequence(prod_exp[1:]):
+                        if s not in fst:
+                            fst.append(s)
                     trace.pop()
             return fst
 
@@ -71,12 +73,18 @@ class GrammarLalr(GrammarBase):
             for X in beta:
                 if X in trace:  # avoid production loop
                     break
-                X_first = first_single(X)
-                fst += (s for s in X_first if s is not None)
-                if None not in X_first:
+                is_epsilon_existed = False
+                for s in first_single(X):
+                    if s is None:
+                        is_epsilon_existed = True
+                    else:
+                        if s not in fst:
+                            fst.append(s)
+                if not is_epsilon_existed:
                     break
             else:
-                fst.append(None)
+                if None not in fst:
+                    fst.append(None)
             return fst
 
         if is_beta:
@@ -88,11 +96,11 @@ class GrammarLalr(GrammarBase):
         if lookup_cache and X in self._first_map:
             return self._first_map[X]
 
-        fst = self._first_map[X] = self._internal_first(False, X)
+        fst = self._first_map[X] = self._run_first_session(False, X)
         return fst
 
     def first_beta(self, beta):
-        return self._internal_first(True, beta)
+        return self._run_first_session(True, beta)
 
     # ---------------
     # Routines used to construct LR(0) itemset collection
@@ -230,17 +238,22 @@ class GrammarLalr(GrammarBase):
                     prod_exp = self.prods[prod]
                     if dot_pos < len(prod_exp):
                         X = prod_exp[dot_pos]
-                        p_kernel = self.goto_track[K_idx][X]
-                        p_item = next(idx for idx, e in enumerate(kernel_collection[p_kernel])
+                        g_kernel = self.goto_track[K_idx][X]
+                        g_item = next(i for i, e in enumerate(kernel_collection[g_kernel])
                                       if e[0] == prod and e[1] == dot_pos+1)
+                        g_las = kernel_collection[g_kernel][g_item][2]
 
-                        if SHARP_SYMBOL in las:
-                            propagate_table[K_idx][ki].append((p_kernel, p_item))
-
-                        p_las = kernel_collection[p_kernel][p_item][2]
+                        is_sharp_symbol_here = False
                         for s in las:
-                            if s is not None and s != SHARP_SYMBOL and s not in p_las:
-                                p_las.append(s)
+                            if s is None:
+                                continue
+                            if s == SHARP_SYMBOL:
+                                is_sharp_symbol_here = True
+                            else:
+                                if s not in g_las:
+                                    g_las.append(s)
+                        if is_sharp_symbol_here:
+                            propagate_table[K_idx][ki].append((g_kernel, g_item))
 
     def propagate_lookahead(self):
         propagate_table = self.lookahead_propagate_table
