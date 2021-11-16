@@ -27,22 +27,23 @@ class StorageLogger():
 
 
 class CalcLexer(Lexer):
-    __(r'\+')('PLUS')
-    __(r'\-')('MINUS')
-    __(r'\*')('TIMES')
-    __(r'\/')('DIVIDE')
-    __(r'\=')('EQUALS')
-    __(r'\(')('LPAREN')
-    __(r'\)')('RPAREN')
-    __(r'[a-zA-Z_][a-zA-Z0-9_]*')('NAME')
+    ttv = lambda t: t
+    __(r'\+')('PLUS', ttv)
+    __(r'\-')('MINUS', ttv)
+    __(r'\*')('TIMES', ttv)
+    __(r'\/')('DIVIDE', ttv)
+    __(r'\=')('EQUALS', ttv)
+    __(r'\(')('LPAREN', ttv)
+    __(r'\)')('RPAREN', ttv)
+    __(r'[a-zA-Z_][a-zA-Z0-9_]*')('NAME', ttv)
 
     @__(r'\d+')
     def t_NUMBER(self, t):
         t.type = 'NUMBER'
         try:
-            t.value = int(t.value)
+            t.value = int(t.text)
         except ValueError:
-            print("Integer value too large %s" % t.value)
+            print("Integer value too large %s" % t.text)
             t.value = 0
         return t
 
@@ -50,11 +51,11 @@ class CalcLexer(Lexer):
 
     @__(r'\n+')
     def t_newline(self, t):
-        t.lexer.lineno += t.value.count("\n")
+        t.lexer.lineno += t.text.count("\n")
 
     @__('__error__')
     def t_error(self, t):
-        print("Illegal character '%s'" % t.value[0])
+        print("Illegal character '%s'" % t.text[0])
         t.lexer.skip(1)
 
 
