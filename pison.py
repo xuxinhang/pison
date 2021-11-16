@@ -82,7 +82,7 @@ class ProductionAdder(object):
 
             for i in range(len(rest) + 1):
                 r = None if i == len(rest) else rest[i]
-                if r is None or (type(r) is str and r[0] == '%'):
+                if r is None or r == '' or (type(r) is str and len(r) > 1 and r[0] == '%'):
                     if last_mark_name is None:
                         ret_right = map(_norm_symbol, rest[last_mark_pos+1:i])
                     elif last_mark_name == 'prec':
@@ -94,7 +94,7 @@ class ProductionAdder(object):
                         raise ValueError('Unexpected %')
                     last_mark_name = r and r[1:]
                     last_mark_pos = i
-                if r is None:
+                if r is None or r == '':
                     break
 
             return Production(left, ret_right, prec=ret_prec)
@@ -106,7 +106,10 @@ class ProductionAdder(object):
         self.prods = prods
         self.prod_left = left
 
-    def __call__(self, f):
+    def __call__(self, f=None):
+        if f is None:
+            f = default_rule_action
+
         if not callable(f):
             raise TypeError('The production handler must be callable.')
 
@@ -140,6 +143,11 @@ def get_rightmost_terminal(syms, terminal_list):
 
 def default_error_cb(self, msg):
     print(msg)  # TODO
+
+
+def default_rule_action(self, p):
+    """ When the action is empty, use it. """
+    p[0] = p[1]
 
 
 class AbsProductionTuple(tuple):
