@@ -52,8 +52,12 @@ class GrammarLalr(GrammarBase):
         trace = []
 
         def first_single(X):
-            if X < 0:
+            if X < 0:  # for terminals
                 return [X]
+
+            if X in self._first_map:  # lookup cache
+                return self._first_map[X]
+
             fst = []
             for prod in self._prod_map[X]:
                 prod_exp = self.prods[prod]
@@ -66,6 +70,8 @@ class GrammarLalr(GrammarBase):
                         if s not in fst:
                             fst.append(s)
                     trace.pop()
+
+            self._first_map[X] = fst
             return fst
 
         def first_sequence(beta):
@@ -92,12 +98,8 @@ class GrammarLalr(GrammarBase):
         else:
             return first_single(s)
 
-    def first(self, X, lookup_cache=True):
-        if lookup_cache and X in self._first_map:
-            return self._first_map[X]
-
-        fst = self._first_map[X] = self._run_first_session(False, X)
-        return fst
+    def first(self, X):
+        return self._run_first_session(False, X)
 
     def first_beta(self, beta):
         return self._run_first_session(True, beta)
@@ -124,7 +126,7 @@ class GrammarLalr(GrammarBase):
         J.sort()
         return J
 
-    def goto_lr0(self, I, X, *, kernel=False):
+    def goto_lr0(self, I, X):
         cache_key = (id(I), X)  # TODO
         if cache_key in self._goto_cache:
             return self._goto_cache[cache_key]
@@ -136,47 +138,43 @@ class GrammarLalr(GrammarBase):
                 J.append((prod_idx, dot_pos + 1))
 
         self._goto_cache[cache_key] = JJ = self.closure_lr0(J)
-        if kernel:
-            return J, JJ
-        else:
-            return JJ
+        return J, JJ
 
     def items_lr0(self):
         D = [[(0, 1)]]
         C = [self.closure_lr0(k) for k in D]
-        goto_track = [{}]
+        goto_graph = {}
 
         v, w = 0, len(C)
         while v < w:
             I = C[v]
 
-            # pick out symbols following dot
-            interesting_symbols = set()
+            # scan through the set of items to pick out symbols following dot
+            # only those symbols can lead to no empty GOTO result.
+            potential_symbols = set()
             for prod_idx, dot_pos in I:
                 prod_exp = self.prods[prod_idx]
                 if dot_pos < len(prod_exp):
-                    interesting_symbols.add(prod_exp[dot_pos])
+                    potential_symbols.add(prod_exp[dot_pos])
 
-            for X in interesting_symbols:
-                gK, gI = self.goto_lr0(I, X, kernel=True)
+            # Compute GOTO for each potential symbol
+            for X in potential_symbols:
+                gK, gI = self.goto_lr0(I, X)
                 if len(gI) == 0:
                     continue
-                try:
-                    gI_idx = C.index(gI)
+                try:  # to find an existing set of items
+                    goto_graph[(v, X)] = C.index(gI)  # compare the hash for each set of items
                 except Exception:
-                    C.append(gI)
                     D.append(gK)
-                    goto_track.append({})
-                    goto_track[v][X] = len(C) - 1
+                    C.append(gI)
                     w += 1
-                else:
-                    goto_track[v][X] = gI_idx
+                    goto_graph[(v, X)] = w - 1
 
             v += 1
 
         self.kernel_collection = D
         self.itemset_collection = C
-        self.goto_track = goto_track
+        self.goto_graph = goto_graph
 
     # ----------------
     # Routines for LALR grammar
@@ -191,7 +189,7 @@ class GrammarLalr(GrammarBase):
             prod_exp = self.prods[prod]
             if dot_pos < len(prod_exp):
                 if (dot_sym := prod_exp[dot_pos]) >= 0:
-                    # compute frist symbols as two parts:
+                    # compute first symbols as two parts:
                     #   producted symbols at right of dot and lookahead symbols
                     right_fst = self.first_beta(prod_exp[dot_pos+1:])
                     total_fst = las[:] if None in right_fst else []
@@ -224,8 +222,7 @@ class GrammarLalr(GrammarBase):
         EOF_SYMBOL = self.terminal_map['EOF']
 
         # initialize tables
-        propagate_table = self.lookahead_propagate_table\
-            = [[[] for _ in K] for K in self.kernel_collection]
+        propagate_graph = self.lookahead_propagate_graph = {}
         kernel_collection = self.lalr_kernel_collection\
             = [[(*kitem, []) for kitem in K] for K in self.kernel_collection]
         for kitem in kernel_collection[0]:
@@ -236,45 +233,48 @@ class GrammarLalr(GrammarBase):
                 J = self.lalr_closure([(k_prod, k_dot_pos, [SHARP_SYMBOL])])
                 for prod, dot_pos, las in J:
                     prod_exp = self.prods[prod]
-                    if dot_pos < len(prod_exp):
-                        X = prod_exp[dot_pos]
-                        g_kernel = self.goto_track[K_idx][X]
-                        g_item = next(i for i, e in enumerate(kernel_collection[g_kernel])
-                                      if e[0] == prod and e[1] == dot_pos+1)
-                        g_las = kernel_collection[g_kernel][g_item][2]
+                    if not dot_pos < len(prod_exp):
+                        continue
 
-                        is_sharp_symbol_here = False
-                        for s in las:
-                            if s is None:
-                                continue
-                            if s == SHARP_SYMBOL:
-                                is_sharp_symbol_here = True
-                            else:
-                                if s not in g_las:
-                                    g_las.append(s)
-                        if is_sharp_symbol_here:
-                            propagate_table[K_idx][ki].append((g_kernel, g_item))
+                    X = prod_exp[dot_pos]
+                    g_kernel = self.goto_graph[(K_idx, X)]
+                    g_item = next(i for i, e in enumerate(kernel_collection[g_kernel])
+                                    if e[0] == prod and e[1] == dot_pos+1)
+                    g_las = kernel_collection[g_kernel][g_item][2]
+
+                    is_sharp_symbol_here = False
+                    for s in las:
+                        if s is None:
+                            continue
+                        if s == SHARP_SYMBOL:
+                            is_sharp_symbol_here = True
+                        else:
+                            if s not in g_las:
+                                g_las.append(s)
+                    if is_sharp_symbol_here:
+                        if (K_idx, ki) in propagate_graph:
+                            propagate_graph[(K_idx, ki)].append((g_kernel, g_item))
+                        else:
+                            propagate_graph[(K_idx, ki)] = [(g_kernel, g_item)]
 
     def propagate_lookahead(self):
-        propagate_table = self.lookahead_propagate_table
+        propagate_graph = self.lookahead_propagate_graph
         kernel_collection = self.lalr_kernel_collection
 
         cnt = 1  # trace how many symbols are propagated in a loop turn
         while cnt:
             cnt = 0
-            for source_kernel, propagate_table_kernel in enumerate(propagate_table):
-                for source_item, propagate_table_kernel_item in enumerate(propagate_table_kernel):
-                    for target_kernel, target_item in propagate_table_kernel_item:
-                        source_lookahead_list = kernel_collection[source_kernel][source_item][2]
-                        target_lookahead_list = kernel_collection[target_kernel][target_item][2]
-                        for s in source_lookahead_list:
-                            if s not in target_lookahead_list:
-                                target_lookahead_list.append(s)
-                                cnt += 1
+            for (source_kernel, source_item), target_list in propagate_graph.items():
+                for (target_kernel, target_item) in target_list:
+                    source_lookahead_list = kernel_collection[source_kernel][source_item][2]
+                    target_lookahead_list = kernel_collection[target_kernel][target_item][2]
+                    for s in source_lookahead_list:
+                        if s not in target_lookahead_list:
+                            target_lookahead_list.append(s)
+                            cnt += 1
 
     def lalr_items(self):
-        self.lalr_itemset_collection\
-            = list(map(self.lalr_closure, self.lalr_kernel_collection))
+        self.lalr_itemset_collection = [self.lalr_closure(K) for K in self.lalr_kernel_collection]
 
     def construct_parsing_table(self):
         # Initialize table storage space.
@@ -358,7 +358,7 @@ class GrammarLalr(GrammarBase):
                 # case 1) shift
                 if dot_pos < len(prod_exp) and prod_exp[dot_pos] < 0:
                     a = prod_exp[dot_pos]
-                    j = self.goto_track[i][a]
+                    j = self.goto_graph[(i, a)]
                     set_action(i, a, j << 2 | 3, a)
                 # case 2) accept
                 elif prod_exp[0] == 0 and dot_pos == len(prod_exp):
@@ -373,10 +373,9 @@ class GrammarLalr(GrammarBase):
                     pass  # Each cell is set with "0" by default.
 
         # Construct GOTO table for each state
-        for i in range(len(self.lalr_itemset_collection)):
-            for A, j in self.goto_track[i].items():
-                if A >= 0:
-                    self.parsing_table_goto[i, A] = j
+        for (i, A), j in self.goto_graph.items():
+            if A >= 0:
+                self.parsing_table_goto[i, A] = j
 
     def compile(self):
         self.items_lr0()
