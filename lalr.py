@@ -1,4 +1,5 @@
 from com import AUG_SYMBOL_EOF, GrammarError
+from bitset import create_bitset, get_bit, iterate_bitset, or_bitset, set_bit
 
 
 class GrammarBase():
@@ -181,7 +182,7 @@ class GrammarLalr(GrammarBase):
     # ----------------
     def lalr_closure(self, I):
         I = I[:]
-        existed_item = {}
+        added_item = {}  # TODO: initialize contents
 
         v, w = 0, len(I)
         while v < w:
@@ -189,28 +190,24 @@ class GrammarLalr(GrammarBase):
             prod_exp = self.prods[prod]
             if dot_pos < len(prod_exp):
                 if (dot_sym := prod_exp[dot_pos]) >= 0:
-                    # compute first symbols as two parts:
-                    #   producted symbols at right of dot and lookahead symbols
-                    right_fst = self.first_beta(prod_exp[dot_pos+1:])
-                    total_fst = las[:] if None in right_fst else []
-                    for t in right_fst:
-                        if t is not None and t not in total_fst:
-                            total_fst.append(t)
-                    # stuff the lookahead list of lalr item
-                    for y in self._prod_map[dot_sym]:
-                        if y in existed_item:
-                            existed_las = I[existed_item[y]][2]
-                            for t in total_fst:
-                                if t not in existed_las:
-                                    existed_las.append(t)
+                    # 1) compute FIRST(ba) as lookahead symbols of new items
+                    fst_b = self.first_beta(prod_exp[dot_pos+1:])
+                    fst_ba = create_bitset(len(self.terminals))
+                    for b in fst_b:
+                        if b is None:
+                            or_bitset(fst_ba, las)
                         else:
-                            I.append((y, 1, total_fst))
+                            set_bit(fst_ba, ~b)
+                    # 2) stuff the lookahead list of lalr item
+                    for y in self._prod_map[dot_sym]:
+                        if y in added_item:
+                            or_bitset(I[added_item[y]][2], fst_ba)
+                        else:
+                            I.append((y, 1, fst_ba[:]))
                             w += 1
-                            existed_item[y] = w - 1
+                            added_item[y] = w - 1
             v += 1
 
-        for item in I:
-            item[2].sort(reverse=True)
         I.sort(key=lambda item: item[0:1])
         return I
 
@@ -218,19 +215,22 @@ class GrammarLalr(GrammarBase):
     # Construct LALR itemset by attaching lookahead symbols to LR(0) itemset
     # -----------------
     def discover_lookahead(self):
-        SHARP_SYMBOL = self.terminal_map['propagate_placeholder']
         EOF_SYMBOL = self.terminal_map['EOF']
+        SHARP_SYMBOL = self.terminal_map['propagate_placeholder']
+        ONE_HOT_SHARP_SYMBOL_BITSET = create_bitset(len(self.terminals))
+        set_bit(ONE_HOT_SHARP_SYMBOL_BITSET, ~SHARP_SYMBOL)
 
         # initialize tables
         propagate_graph = self.lookahead_propagate_graph = {}
-        kernel_collection = self.lalr_kernel_collection\
-            = [[(*kitem, []) for kitem in K] for K in self.kernel_collection]
+        kernel_collection = self.lalr_kernel_collection =\
+            [[(*kitem, create_bitset(len(self.terminals))) for kitem in K]\
+             for K in self.kernel_collection]
         for kitem in kernel_collection[0]:
-            kitem[2].append(EOF_SYMBOL)
+            set_bit(kitem[2], ~EOF_SYMBOL)
 
         for K_idx, K in enumerate(kernel_collection):
             for ki, (k_prod, k_dot_pos, _) in enumerate(K):
-                J = self.lalr_closure([(k_prod, k_dot_pos, [SHARP_SYMBOL])])
+                J = self.lalr_closure([(k_prod, k_dot_pos, ONE_HOT_SHARP_SYMBOL_BITSET[:])])
                 for prod, dot_pos, las in J:
                     prod_exp = self.prods[prod]
                     if not dot_pos < len(prod_exp):
@@ -242,36 +242,25 @@ class GrammarLalr(GrammarBase):
                                     if e[0] == prod and e[1] == dot_pos+1)
                     g_las = kernel_collection[g_kernel][g_item][2]
 
-                    is_sharp_symbol_here = False
-                    for s in las:
-                        if s is None:
-                            continue
-                        if s == SHARP_SYMBOL:
-                            is_sharp_symbol_here = True
-                        else:
-                            if s not in g_las:
-                                g_las.append(s)
-                    if is_sharp_symbol_here:
-                        if (K_idx, ki) in propagate_graph:
-                            propagate_graph[(K_idx, ki)].append((g_kernel, g_item))
-                        else:
-                            propagate_graph[(K_idx, ki)] = [(g_kernel, g_item)]
+                    or_bitset(g_las, las)
+
+                    if get_bit(las, ~SHARP_SYMBOL):
+                        propagate_graph.setdefault((K_idx, ki), []).append((g_kernel, g_item))
 
     def propagate_lookahead(self):
         propagate_graph = self.lookahead_propagate_graph
         kernel_collection = self.lalr_kernel_collection
 
-        cnt = 1  # trace how many symbols are propagated in a loop turn
-        while cnt:
-            cnt = 0
+        changed = 1
+        while changed:  # loop until there is no more change.
+            changed = 0
             for (source_kernel, source_item), target_list in propagate_graph.items():
                 for (target_kernel, target_item) in target_list:
-                    source_lookahead_list = kernel_collection[source_kernel][source_item][2]
-                    target_lookahead_list = kernel_collection[target_kernel][target_item][2]
-                    for s in source_lookahead_list:
-                        if s not in target_lookahead_list:
-                            target_lookahead_list.append(s)
-                            cnt += 1
+                    source_lookahead_set = kernel_collection[source_kernel][source_item][2]
+                    target_lookahead_set = kernel_collection[target_kernel][target_item][2]
+                    prev_target_lookahead_set = bytearray(target_lookahead_set)
+                    or_bitset(target_lookahead_set, source_lookahead_set)
+                    changed |= (prev_target_lookahead_set != target_lookahead_set)
 
     def lalr_items(self):
         self.lalr_itemset_collection = [self.lalr_closure(K) for K in self.lalr_kernel_collection]
@@ -366,8 +355,8 @@ class GrammarLalr(GrammarBase):
                     set_action(i, a, 1, a)
                 # case 3) reduce
                 elif dot_pos == len(prod_exp):
-                    for a in las:
-                        set_action(i, a, prod_idx << 2 | 2, a)
+                    for a in iterate_bitset(las):
+                        set_action(i, ~a, prod_idx << 2 | 2, ~a)
                 # case 4) error
                 else:
                     pass  # Each cell is set with "0" by default.
@@ -411,7 +400,8 @@ class GrammarLalr(GrammarBase):
         prod, dot_pos, las = item
         prod_exp = self.prods[prod]
         return self.stringify_production(prod_exp, dot_pos) + ' , '\
-            + '/'.join(str(self.terminals[~t]) for t in las)
+            + '/'.join(str(self.terminals[t]) for t in iterate_bitset(las)
+                       if ~t != self.terminal_map['propagate_placeholder'])
 
     def print_lr0_itemset_collection(self):
         for i, itemset in enumerate(self.itemset_collection):
@@ -424,17 +414,16 @@ class GrammarLalr(GrammarBase):
             print(*('    ' + self.stringify_lr0_item(t) for t in itemset), sep='\n')
 
     def print_lookahead_propagate_table(self):
-        table = self.lookahead_propagate_table
+        table = self.lookahead_propagate_graph
         kernel_collection = self.kernel_collection
-        for K_i, K in enumerate(table):
-            for ki, propagate_targets in enumerate(K):
-                if len(propagate_targets) == 0:
-                    continue
-                source_item = kernel_collection[K_i][ki]
-                print('I%d:  %s' % (K_i, self.stringify_lr0_item(source_item)))
-                for target in propagate_targets:
-                    target_item = kernel_collection[target[0]][target[1]]
-                    print('        I%d:  %s' % (target[0], self.stringify_lr0_item(target_item)))
+        for (K_i, ki), propagate_targets in table.items():
+            if len(propagate_targets) == 0:
+                continue
+            source_item = kernel_collection[K_i][ki]
+            print('I%d:  %s' % (K_i, self.stringify_lr0_item(source_item)))
+            for target in propagate_targets:
+                target_item = kernel_collection[target[0]][target[1]]
+                print('        I%d:  %s' % (target[0], self.stringify_lr0_item(target_item)))
 
     def print_lookahead_generate_table(self):
         table = self.lookahead_generate_table

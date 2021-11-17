@@ -253,7 +253,7 @@ class MetaParser(type):
             cls._abs_prods.append(a)
 
         # Generate the grammar table
-        cls.grammar_engine = getattr(cls, 'grammar_engine', 'slr')
+        cls.grammar_engine = getattr(cls, 'grammar_engine', 'lalr')
         if cls.grammar_engine == 'slr':
             from slr import GrammarSlr
             grm = GrammarSlr()
