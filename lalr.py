@@ -33,6 +33,7 @@ class GrammarLalr(GrammarBase):
         self.precedence_map = {} if precedence_map is None else precedence_map.copy()
 
         # prepare useful cache
+        self._prods_len = [len(_) for _ in self.prods]
         self._prod_map = [[] for _ in self.nonterminals]
         for prod_idx, prod_exp in enumerate(self.prods):
             self._prod_map[prod_exp[0]].append(prod_idx)
@@ -49,7 +50,7 @@ class GrammarLalr(GrammarBase):
     # ---------
     # Basic grammar routines
     # ---------
-    def _run_first_session(self, is_beta, s):
+    def _run_first_with_trace(self, is_beta, s):
         trace = []
 
         def first_single(X):
@@ -100,51 +101,48 @@ class GrammarLalr(GrammarBase):
             return first_single(s)
 
     def first(self, X):
-        return self._run_first_session(False, X)
+        return self._run_first_with_trace(False, X)
 
     def first_beta(self, beta):
-        return self._run_first_session(True, beta)
+        return self._run_first_with_trace(True, beta)
 
     # ---------------
     # Routines used to construct LR(0) itemset collection
     # ---------------
     def closure_lr0(self, I):
         J = I[:]
-        mark = set()  # mark productions had been added to J
+        # mark productions had been added to J
+        existed_dot_ahead_prods = {p for p, d in J if d == 1}
 
         v, w = 0, len(J)
         while v < w:
             prod_idx, dot_pos = J[v]
-            prod_exp = self.prods[prod_idx]
-            if dot_pos < len(prod_exp) and prod_exp[dot_pos] >= 0:
+            prod_exp, prod_exp_len = self.prods[prod_idx], self._prods_len[prod_idx]
+            if dot_pos < prod_exp_len and prod_exp[dot_pos] >= 0:
                 for p_idx in self._prod_map[prod_exp[dot_pos]]:
-                    if p_idx not in mark:
+                    if p_idx not in existed_dot_ahead_prods:
+                        existed_dot_ahead_prods.add(p_idx)
                         J.append((p_idx, 1))
                         w += 1
-                        mark.add(p_idx)
             v += 1
 
         J.sort()
         return J
 
     def goto_lr0(self, I, X):
-        cache_key = (id(I), X)  # TODO
-        if cache_key in self._goto_cache:
-            return self._goto_cache[cache_key]
-
         J = []
         for prod_idx, dot_pos in I:
-            prod_exp = self.prods[prod_idx]
-            if dot_pos < len(prod_exp) and prod_exp[dot_pos] == X:
+            prod_exp, prod_exp_len = self.prods[prod_idx], self._prods_len[prod_idx]
+            if dot_pos < prod_exp_len and prod_exp[dot_pos] == X:
                 J.append((prod_idx, dot_pos + 1))
-
-        self._goto_cache[cache_key] = JJ = self.closure_lr0(J)
-        return J, JJ
+        # No "J.sort()" here, because if I is sorted, then J must be sorted.
+        return J, self.closure_lr0(J)
 
     def items_lr0(self):
         D = [[(0, 1)]]
-        C = [self.closure_lr0(k) for k in D]
+        C = [self.closure_lr0(_) for _ in D]
         goto_graph = {}
+        potential_symbols = set()
 
         v, w = 0, len(C)
         while v < w:
@@ -152,19 +150,19 @@ class GrammarLalr(GrammarBase):
 
             # scan through the set of items to pick out symbols following dot
             # only those symbols can lead to no empty GOTO result.
-            potential_symbols = set()
+            potential_symbols.clear()
             for prod_idx, dot_pos in I:
-                prod_exp = self.prods[prod_idx]
-                if dot_pos < len(prod_exp):
+                prod_exp, prod_exp_len = self.prods[prod_idx], self._prods_len[prod_idx]
+                if dot_pos < prod_exp_len:
                     potential_symbols.add(prod_exp[dot_pos])
 
             # Compute GOTO for each potential symbol
             for X in potential_symbols:
                 gK, gI = self.goto_lr0(I, X)
-                if len(gI) == 0:
-                    continue
+                # if len(gI) == 0: continue
                 try:  # to find an existing set of items
-                    goto_graph[(v, X)] = C.index(gI)  # compare the hash for each set of items
+                    goto_graph[(v, X)] = D.index(gK)
+                    # TOOD: (performance) compare the hash for each set of items
                 except Exception:
                     D.append(gK)
                     C.append(gI)
