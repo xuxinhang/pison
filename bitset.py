@@ -22,7 +22,9 @@ def clr_bit(bitset: bytearray, idx: int):
 
 def or_bitset(bitset: bytearray, source: bytearray):
     for i in range(len(source)):
-        bitset[i] |= source[i]
+        if source[i] != 0:  # @HACK: it seems Python's bit operator is slow.
+        # if ((~bitset[i]) & source[i]) != 0:
+            bitset[i] |= source[i]
 
 
 def iterate_bitset(bitset: bytearray, zero=False):
