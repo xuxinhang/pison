@@ -180,7 +180,7 @@ class GrammarLalr(GrammarBase):
     # ----------------
     def lalr_closure(self, I):
         I = I[:]
-        added_item = {}  # TODO: initialize contents
+        added_item = {s[0]: i for i, s in enumerate(I) if s[1] == 1}
 
         v, w = 0, len(I)
         while v < w:
@@ -201,7 +201,7 @@ class GrammarLalr(GrammarBase):
                         if y in added_item:
                             or_bitset(I[added_item[y]][2], fst_ba)
                         else:
-                            I.append((y, 1, fst_ba[:]))
+                            I.append((y, 1, fst_ba[:]))  # use copy
                             w += 1
                             added_item[y] = w - 1
             v += 1
@@ -230,20 +230,19 @@ class GrammarLalr(GrammarBase):
             for ki, (k_prod, k_dot_pos, _) in enumerate(K):
                 J = self.lalr_closure([(k_prod, k_dot_pos, ONE_HOT_SHARP_SYMBOL_BITSET[:])])
                 for prod, dot_pos, las in J:
-                    prod_exp = self.prods[prod]
-                    if not dot_pos < len(prod_exp):
+                    prod_exp, prod_exp_len = self.prods[prod], self._prods_len[prod]
+                    if not dot_pos < prod_exp_len:
                         continue
-
                     X = prod_exp[dot_pos]
-                    g_kernel = self.goto_graph[(K_idx, X)]
-                    g_item = next(i for i, e in enumerate(kernel_collection[g_kernel])
-                                    if e[0] == prod and e[1] == dot_pos+1)
-                    g_las = kernel_collection[g_kernel][g_item][2]
-
-                    or_bitset(g_las, las)
-
+                    goto_kernel = self.goto_graph[(K_idx, X)]
+                    for goto_item, e in enumerate(kernel_collection[goto_kernel]):
+                        if e[0] == prod and e[1] == dot_pos + 1:
+                            break  # We assert there must be such item.
+                    # case 1:
+                    or_bitset(kernel_collection[goto_kernel][goto_item][2], las)
+                    # case 2:
                     if get_bit(las, ~SHARP_SYMBOL):
-                        propagate_graph.setdefault((K_idx, ki), []).append((g_kernel, g_item))
+                        propagate_graph.setdefault((K_idx, ki), []).append((goto_kernel, goto_item))
 
     def propagate_lookahead(self):
         propagate_graph = self.lookahead_propagate_graph
