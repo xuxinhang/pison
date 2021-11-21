@@ -111,19 +111,26 @@ class GrammarLalr(GrammarBase):
     # ---------------
     def closure_lr0(self, I):
         J = I[:]
-        # mark productions had been added to J
-        existed_dot_ahead_prods = {p for p, d in J if d == 1}
+
+        # Prepare some cache sets to speed up
+        # 1) memorize production left parts like "B" in "B → ∙γ" added to J by this routine
+        added_dot_ahead_prod_left = set()
+        # 2) memorize productions like "B → ∙γ" originally existed in J
+        existed_dot_ahead_prod = frozenset(p for p, d in J if d == 1)
 
         v, w = 0, len(J)
         while v < w:
             prod_idx, dot_pos = J[v]
             prod_exp, prod_exp_len = self.prods[prod_idx], self._prods_len[prod_idx]
-            if dot_pos < prod_exp_len and prod_exp[dot_pos] >= 0:
-                for p_idx in self._prod_map[prod_exp[dot_pos]]:
-                    if p_idx not in existed_dot_ahead_prods:
-                        existed_dot_ahead_prods.add(p_idx)
-                        J.append((p_idx, 1))
-                        w += 1
+            if dot_pos < prod_exp_len and (dot_symbol := prod_exp[dot_pos]) >= 0:
+                if dot_symbol in added_dot_ahead_prod_left:
+                    pass
+                else:
+                    for p_idx in self._prod_map[dot_symbol]:
+                        if p_idx not in existed_dot_ahead_prod:
+                            J.append((p_idx, 1))
+                            w += 1
+                    added_dot_ahead_prod_left.add(dot_symbol)
             v += 1
 
         J.sort()
@@ -180,7 +187,7 @@ class GrammarLalr(GrammarBase):
     # ----------------
     def lalr_closure(self, I):
         I = I[:]
-        added_item = {s[0]: i for i, s in enumerate(I) if s[1] == 1}
+        added_dot_ahead_prod = {s[0]: i for i, s in enumerate(I) if s[1] == 1}
 
         v, w = 0, len(I)
         while v < w:
@@ -198,12 +205,12 @@ class GrammarLalr(GrammarBase):
                             set_bit(fst_ba, ~b)
                     # 2) stuff the lookahead list of lalr item
                     for y in self._prod_map[dot_sym]:
-                        if y in added_item:
-                            or_bitset(I[added_item[y]][2], fst_ba)
+                        if y in added_dot_ahead_prod:
+                            or_bitset(I[added_dot_ahead_prod[y]][2], fst_ba)
                         else:
                             I.append((y, 1, fst_ba[:]))  # use copy
                             w += 1
-                            added_item[y] = w - 1
+                            added_dot_ahead_prod[y] = w - 1
             v += 1
 
         I.sort(key=lambda item: item[0:1])
