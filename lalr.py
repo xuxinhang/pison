@@ -149,8 +149,20 @@ class GrammarLalr(GrammarBase):
         D = [[(0, 1)]]
         C = [self.closure_lr0(_) for _ in D]
         goto_graph = {}
-        potential_symbols = set()
 
+        # For better search performance in itemset list D, compute and memorize
+        # the features of each itemset.
+        def get_feature(itemset):
+            # compute the feature of the given itemset
+            ans = itemset[0][0] << 24 ^ itemset[0][1] << 16\
+                ^ itemset[-1][0] << 8 ^ itemset[-1][1] << 0
+            sft = len(itemset) % 32
+            return ans >> (32-sft) | (ans & 0xffffffff >> sft) << sft
+        kernel_feature_map = {}
+        for i, k in enumerate(D):
+            kernel_feature_map.setdefault(get_feature(k), []).append(i)
+
+        potential_symbols = set()
         v, w = 0, len(C)
         while v < w:
             I = C[v]
@@ -166,16 +178,23 @@ class GrammarLalr(GrammarBase):
             # Compute GOTO for each potential symbol
             for X in potential_symbols:
                 gK, gI = self.goto_lr0(I, X)
-                # if len(gI) == 0: continue
-                try:  # to find an existing set of items
-                    goto_graph[(v, X)] = D.index(gK)
-                    # TOOD: (performance) compare the hash for each set of items
-                except Exception:
+                gK_feature = get_feature(gK)
+                # the GOTO result is never empty due to only computing on potential symbols.
+                #   if len(gI) == 0: continue
+                # to find an existing set of items
+                D_index = -1
+                if feature_list := kernel_feature_map.get(gK_feature):
+                    for k in feature_list:
+                        if D[k] == gK:
+                            D_index = k
+                            break
+                if D_index == -1:
                     D.append(gK)
                     C.append(gI)
                     w += 1
-                    goto_graph[(v, X)] = w - 1
-
+                    D_index = w - 1
+                    kernel_feature_map.setdefault(gK_feature, []).append(D_index)
+                goto_graph[(v, X)] = D_index
             v += 1
 
         self.kernel_collection = D
