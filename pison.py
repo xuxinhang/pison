@@ -24,11 +24,15 @@ class DefaultLogger(object):
     critical = debug
 
 
+# Class Production
 class Production(object):
+    """
+    This class keeps anything about production, including
+    left part, right part and prec part, etc.
+    """
     def __init__(self, left, right, *, prec=None, hdlr=None):
         self._tuple = (left, *right)
         self.prec = prec
-        self.hdlr = hdlr
 
     def __getitem__(self, idx):
         return self._tuple[idx]
@@ -43,6 +47,9 @@ class Production(object):
 
 
 class ReduceToken(object):
+    """
+    Inner used Token class.
+    """
     def __init__(self, type, value):
         self.type = type
         self.value = value
@@ -51,7 +58,16 @@ class ReduceToken(object):
         return 'ReduceToken(%r, %r)' % (self.type, self.value)
 
 
+def _default_rule_action(self, p):
+    """ When the action is empty, use it. """
+    p[0] = p[1]
+
+
 class ProductionAdder(object):
+    @staticmethod
+    def presetStore(store):
+        return lambda *args: ProductionAdder(store, *args)
+
     def __init__(self, store, *args):
         self.store = store
 
@@ -74,19 +90,24 @@ class ProductionAdder(object):
         else:
             rests = [args[1:]]
 
-        def _struct_production(rest):
-            ret_prec = None
+        def _parse_production_right(rest):
+            # fields of production right
             ret_right = None
+            ret_prec = None
+
+            # mark is something like "%name", we record their name and position.
             last_mark_name = None
             last_mark_pos = -1
 
+            # enumerate through items then split and save each field into variables.
             for i in range(len(rest) + 1):
                 r = None if i == len(rest) else rest[i]
-                if r is None or r == '' or (type(r) is str and len(r) > 1 and r[0] == '%'):
+                if (r is None or r == '') or\
+                    (type(r) is str and len(r) > 1 and r[0] == '%'):
                     if last_mark_name is None:
-                        ret_right = map(_norm_symbol, rest[last_mark_pos+1:i])
+                        ret_right = tuple(map(_norm_symbol, rest[last_mark_pos+1:i]))
                     elif last_mark_name == 'prec':
-                        if last_mark_pos + 2 == i:
+                        if last_mark_pos == i-2:
                             ret_prec = rest[last_mark_pos+1]
                         else:
                             raise ValueError('Invalid %prec parameter.')
@@ -99,55 +120,33 @@ class ProductionAdder(object):
 
             return Production(left, ret_right, prec=ret_prec)
 
-        prods = []
-        prods.extend(map(_struct_production, rests))
+        prods = list(map(_parse_production_right, rests))
 
         # save value for later calling
-        self.prods = prods
         self.prod_left = left
+        self.prods = prods
 
     def __call__(self, f=None):
         if f is None:
-            f = default_rule_action
-
-        if not callable(f):
+            f = _default_rule_action
+        elif not callable(f):
             raise TypeError('The production handler must be callable.')
-
         prods = self.prods
-        store = self.store
-        for p in prods:
-            p.hdlr = f
-        store.prods += prods
-        store.hdlrs += [f] * len(prods)
+        self.store.prods += prods
+        self.store.hdlrs += [f] * len(prods)
         return f
 
     def __enter__(self):
-        left = self.prod_left
-        return lambda *args: self.__class__(self.store, left, *args)
+        # only production left is usable.
+        return lambda *args:\
+            self.__class__(self.store, self.prod_left, *args)
 
     def __exit__(self, exc_type, exc_value, traceback):
         return False
 
 
-def _generate_prod_adder(store):
-    return lambda *args: ProductionAdder(store, *args)
-
-
-def get_rightmost_terminal(syms, terminal_list):
-    for s in reversed(syms):
-        if s in terminal_list:
-            return s
-    else:
-        return None
-
-
-def default_error_cb(self, msg):
+def _default_error_cb(self, msg):
     print(msg)  # TODO
-
-
-def default_rule_action(self, p):
-    """ When the action is empty, use it. """
-    p[0] = p[1]
 
 
 class AbsProductionTuple(tuple):
@@ -155,6 +154,9 @@ class AbsProductionTuple(tuple):
 
 
 class MetaHelperStore(object):
+    """
+    This class provides a temporary storage space.
+    """
     def __init__(self):
         self.prods = []
         self.hdlrs = []
@@ -163,12 +165,17 @@ class MetaHelperStore(object):
 
 
 class MetaParser(type):
+    """
+    Metaclass here.
+    """
     stores = {}
 
     @classmethod
     def __prepare__(meta, name, bases, *kwds):
+        # prepare the namespace to provide a production adder usable in class body
+        # create independent store for different classes.
         store = meta.stores[name] = MetaHelperStore()
-        return {'__': _generate_prod_adder(store)}
+        return {'__': ProductionAdder.presetStore(store)}
 
     def __init__(cls, name, bases, namespace, **kwds):
         meta = cls.__class__
@@ -199,21 +206,21 @@ class MetaParser(type):
                     cls._terminals.append(t)
 
         # Generate precedence map
+        cls_precedence = getattr(cls, 'precedence', [])
         try:
-            iter(cls_precedence := getattr(cls, 'precedence', []))
+            iter(cls_precedence)
         except Exception:
             raise TypeError('precedence field must be an iterable.')
-
         cls._precedence_map = prec_map = {}
-        for idx, term in enumerate(cls_precedence):
+        for idx, item in enumerate(cls_precedence):
             level = idx + 1
             try:
-                assoc = term[0]
+                assoc = item[0]
             except Exception:
                 raise TypeError('precedence item must have one element at least.')
             if assoc not in {'left', 'right', 'nonassoc'}:
                 raise ValueError('Invalid precedence assoc value.')
-            for s in term[1:]:
+            for s in item[1:]:
                 if s in prec_map:
                     raise ValueError('The terminal %r has already been assigned with precedence.'
                                      % (s,))
@@ -228,18 +235,18 @@ class MetaParser(type):
         elif len(cls._prods) > 0:
             start_symbol = cls._prods[0][0]
         else:
-            start_symbol = None  # WARN
-
-        if start_symbol is not None:
-            cls._prods.insert(0, Production(AUG_SYMBOL_SI, (start_symbol,)))
-            cls._hdlrs.insert(0, None)
+            raise ValueError('Must assign one production at least.')
+        cls._prods.insert(0, Production(AUG_SYMBOL_SI, (start_symbol,)))
+        cls._hdlrs.insert(0, None)
 
         # Validate %prec field
+        #   ensure every %prec symbol is attached with precedence.
         for p in cls._prods:
             if p.prec is not None and p.prec not in cls._precedence_map:
                 raise ValueError('%prec symbol is not assigned with precedence.')
 
         # Abstract grammar productions
+        #   encode production items with numbers.
         def get_symbol_idx(s):
             try:
                 return cls._nonterminals.index(s)
@@ -282,7 +289,7 @@ class MetaParser(type):
             cls._error_cb = cls.error
             del cls.error
         else:
-            cls._error_cb = default_error_cb
+            cls._error_cb = _default_error_cb
 
 
 class Parser(metaclass=MetaParser):
@@ -449,10 +456,10 @@ class Parser(metaclass=MetaParser):
                     symbol_stack.pop()
                 else:
                     if len(symbol_stack) >= 1 and symbol_stack[-1].type == AUG_SYMBOL_ERROR:
-                        # Just discard this token if the top of symbol stack has been an error.
+                        # Just discard this token if the top of symbol stack has already been an error.
                         look = None
                     else:
-                        # Replace the lookahead token with the newly created error symbol.
+                        # Replace the lookahead token with the newly-created error symbol.
                         look_stack.append(look)
                         look = ReduceToken(AUG_SYMBOL_ERROR, look)
                         look._except = reduce_manual_error
