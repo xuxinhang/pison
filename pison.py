@@ -292,11 +292,16 @@ class MetaParser(type):
             cls._error_cb = _default_error_cb
 
 
+_DEFAULT_SYNTAX_ERROR_INSTANCE = SyntaxError('syntax error')
+
+
 class Parser(metaclass=MetaParser):
     def __init__(self, debug=None, logger=None):
         cls = self.__class__
 
-        self._errok_mark = False
+        self._error_call_flag = False
+        self.recovering_status = 0
+
         self.state_stack = []
         self.symbol_stack = []
 
@@ -326,73 +331,89 @@ class Parser(metaclass=MetaParser):
                 logger.debug('. ' + repr(p))
 
     def errok(self):
-        self._errok_mark = True
+        self.recovering_status = 0
+
+    @property
+    def errstatus(self):
+        return self.recovering_status
 
     def restart(self):
         self.state_stack[:] = [0]
         self.symbol_stack[:] = [AUG_SYMBOL_EOF]
 
+    def ERROR(self):
+        """Raise error explicitly."""
+        self._error_call_flag = True
+
     def parse(self, token_stream):
         cls = self.__class__
         logger = self.logger
 
+        # prepare grammar tables
         if hasattr(cls.grammar, '_table_action'):  # TODO
             grmtab_action = cls.grammar._table_action
         elif hasattr(cls.grammar, 'parsing_table_action'):
             grmtab_action = cls.grammar.parsing_table_action
-
+        else:
+            raise ValueError('Fail to load grammar paring table ACTION')
         if hasattr(cls.grammar, '_table_goto'):
             grmtab_goto = cls.grammar._table_goto
         elif hasattr(cls.grammar, 'parsing_table_goto'):
             grmtab_goto = cls.grammar.parsing_table_goto
+        else:
+            raise ValueError('Fail to load grammar paring table GOTO')
 
-        state_stack = self.state_stack = [0]
-        symbol_stack = self.symbol_stack = []
-        state = 0
+        # reset runtime variables
+        state_stack = self.state_stack
+        symbol_stack = self.symbol_stack
+        state_top = 0
+        state_stack[:] = [state_top]
+        symbol_stack[:] = []
 
-        look_stack = []
-        look = None
-        error_count = 0
+        las_stash = []
+        las_next = None
+        manual_error = None
 
         while True:
-            if look is None:
-                if look_stack:
-                    look = look_stack.pop()
+            if las_next is None:
+                if las_stash:
+                    las_next = las_stash.pop()
                     if logger:
-                        logger.debug('Get token (look_stack): ' + str(look))
+                        logger.debug('Get stashed token: ' + str(las_next))
                 else:
                     try:
-                        look = next(token_stream)
+                        las_next = next(token_stream)
                     except StopIteration:
-                        look = ReduceToken(AUG_SYMBOL_EOF, None)
+                        las_next = ReduceToken(AUG_SYMBOL_EOF, None)
                     if logger:
-                        logger.debug('Get token (extern): ' + str(look))
+                        logger.debug('Fetch new token: ' + str(las_next))
 
             try:
-                symbol_idx = cls._terminals.index(look.type)
+                las_next_idx = cls._terminals.index(las_next.type)
             except Exception:
-                raise SyntaxError('Unknown token with type ' + str(look.type))
-            action = grmtab_action[state, symbol_idx]
-            action_type, action_value = (action & 3), (action >> 2)
-
-            # mark a syntax error raised manually by the reducer funtion
-            reduce_manual_error = None
+                raise SyntaxError('Unknown token type ' + str(las_next.type))
+            action = grmtab_action[state_top, las_next_idx]
+            action_type = action & 3
+            action_value = action >> 2
 
             if logger:
-                logger.debug('Current state: %s >> Coming token: %s' % (state, look))
+                logger.debug('State = %s << Lookahead = %s' % (state_top, las_next))
+
+            if action_type == 1:
+                if logger:
+                    logger.debug('Action::Accept')
+                return getattr(symbol_stack[-1], 'value', None)
 
             if action_type == 3:
                 if logger:
                     logger.debug('Action::Shift')
-
                 # shift a symbol into the stack
-                state = action_value
-                state_stack.append(state)
-                symbol_stack.append(look)
-                look = None
-
-                if error_count:
-                    error_count -= 1
+                state_top = action_value
+                state_stack.append(state_top)
+                symbol_stack.append(las_next)
+                las_next = None
+                if self.recovering_status > 0:
+                    self.recovering_status -= 1
                 continue
 
             if action_type == 2:
@@ -409,69 +430,48 @@ class Parser(metaclass=MetaParser):
                 tslice = [None]
                 if prod_right_length > 0:
                     tslice.extend(x.value for x in symbol_stack[-prod_right_length:])
-                try:
-                    cls._hdlrs[prod_idx](self, tslice)
-                except SyntaxError as e:
-                    # mark a syntax error raised manually
-                    reduce_manual_error = e
-                else:
-                    if prod_right_length > 0:
-                        del state_stack[-prod_right_length:]
-                        del symbol_stack[-prod_right_length:]
+                    del state_stack[-prod_right_length:]
+                    del symbol_stack[-prod_right_length:]
+                cls._hdlrs[prod_idx](self, tslice)
 
+                if self._error_call_flag:
+                    self._error_call_flag = False
+                    manual_error = True
+                    state_top = state_stack[-1]
+                    # continue with the next branch case
+                else:
                     goto_state = grmtab_goto[state_stack[-1], prod_left_idx]
                     state_stack.append(goto_state)
-                    state = goto_state
-
-                    nonterminal_token = ReduceToken(prod_left_sym, tslice[0])
-                    symbol_stack.append(nonterminal_token)
-
+                    state_top = goto_state
+                    symbol_stack.append(ReduceToken(prod_left_sym, tslice[0]))
                     continue
 
-            if action_type == 0 or reduce_manual_error:
+            if action_type == 0 or manual_error:
+                err_msg = 'syntax error'
                 if logger:
-                    if reduce_manual_error:
-                        logger.debug('To handle syntax error raised manually.')
-                    else:
-                        logger.debug('Action::Error')
+                    logger.debug('Action::Error')
 
-                if error_count == 0 or self._errok_mark:
-                    self._errok_mark = False
-                    err_msg = reduce_manual_error.args[0]\
-                        if reduce_manual_error else 'syntax error'
-                    cls._error_cb(self, err_msg)
-                error_count = 3
-
-                # TODO: two special case
-
-                if look.type == AUG_SYMBOL_ERROR:
-                    # Report an exception if this error cannot be handled
-                    if len(state_stack) <= 1:  # TODO
-                        if hasattr(look, '_except'):
-                            raise SyntaxError(*look._except.args)
-                        else:
-                            raise SyntaxError('Unrecoverable syntax error.')
-                    state_stack.pop()
-                    state = state_stack[-1]
-                    symbol_stack.pop()
+                if manual_error:
+                    pass
                 else:
-                    if len(symbol_stack) >= 1 and symbol_stack[-1].type == AUG_SYMBOL_ERROR:
-                        # Just discard this token if the top of symbol stack has already been an error.
-                        look = None
-                    else:
-                        # Replace the lookahead token with the newly-created error symbol.
-                        look_stack.append(look)
-                        look = ReduceToken(AUG_SYMBOL_ERROR, look)
-                        look._except = reduce_manual_error
+                    # report this error if not in recovering mode
+                    if self.recovering_status == 0:
+                        cls._error_cb(self, err_msg)
 
-                reduce_manual_error = None  # reset
+                self.recovering_status = 3
+
+                if las_next.type != AUG_SYMBOL_ERROR:
+                    if symbol_stack[-1].type == AUG_SYMBOL_ERROR:
+                        las_next = None  # discard directly
+                    else:
+                        las_stash.append(las_next)
+                        las_next = ReduceToken(AUG_SYMBOL_ERROR, err_msg)
+                else:
+                    if len(state_stack) <= 1:
+                        raise SyntaxError(err_msg)
+                    state_stack.pop()
+                    state_top = state_stack[-1]
+                    symbol_stack.pop()
                 continue
 
-            if action_type == 1:
-                if logger:
-                    logger.debug('Action::Accept')
-                return getattr(symbol_stack[-1], 'value', None)
-
-            raise RuntimeError('Pison runtime inner error.')
-
-
+            # unreachable here
