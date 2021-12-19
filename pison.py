@@ -46,12 +46,23 @@ class Production(object):
 
 class ReduceToken(object):
     """Inner used Token class."""
-    def __init__(self, type, value):
-        self.type = type
-        self.value = value
+
+    # we mainly use member names from Flex/Bison, ...
+    def __init__(self, char, lval, lloc):
+        self.char = char
+        self.lval = lval
+        self.lloc = lloc
+
+    # ... but still hold compatible member names from PLY
+    def type_getter(self): return self.char  # noqa
+    def type_setter(self, x): self.char = x  # noqa
+    type = property(type_getter, type_setter)
+    def value_getter(self): return self.lval  # noqa
+    def value_setter(self, x): self.lval = x  # noqa
+    value = property(value_getter, value_setter)
 
     def __repr__(self):
-        return 'ReduceToken(%r, %r)' % (self.type, self.value)
+        return 'ReduceToken(%r, %r)' % (self.char, self.lval)
 
 
 def _default_rule_action(self, p):
@@ -283,9 +294,6 @@ class MetaParser(type):
             cls.error = cls._error_cb = _default_error_cb
 
 
-_DEFAULT_SYNTAX_ERROR_INSTANCE = SyntaxError('syntax error')
-
-
 class Parser(metaclass=MetaParser):
     def __init__(self, debug=None, logger=None):
         cls = self.__class__
@@ -378,14 +386,14 @@ class Parser(metaclass=MetaParser):
                     try:
                         las_next = next(token_stream)
                     except StopIteration:
-                        las_next = ReduceToken(AUG_SYMBOL_EOF, None)
+                        las_next = ReduceToken(AUG_SYMBOL_EOF, None, None)
                     if logger:
                         logger.debug('Fetch new token: ' + str(las_next))
 
             try:
-                las_next_idx = cls._terminals.index(las_next.type)
+                las_next_idx = cls._terminals.index(las_next.char)
             except Exception:
-                raise SyntaxError('Unknown token type ' + str(las_next.type))
+                raise SyntaxError('Unknown token type ' + str(las_next.char))
             action = grmtab_action[state_top, las_next_idx]
             action_type = action & 3
             action_value = action >> 2
@@ -421,12 +429,20 @@ class Parser(metaclass=MetaParser):
                 if logger:
                     logger.debug('Action::Reduce (%d) %r' % (prod_idx, cls._prods[prod_idx]))
 
-                tslice = [None]
+                lval_slice = [None]
+                lloc_slice = [None]
                 if prod_right_length > 0:
-                    tslice.extend(x.value for x in symbol_stack[-prod_right_length:])
+                    lval_slice.extend(x.lval for x in symbol_stack[-prod_right_length:])
+                    lloc_slice.extend(x.lloc for x in symbol_stack[-prod_right_length:])
                     del state_stack[-prod_right_length:]
                     del symbol_stack[-prod_right_length:]
-                cls._hdlrs[prod_idx](self, tslice)
+                hdlrs = cls._hdlrs[prod_idx]
+                if hdlrs.__code__.co_argcount == 3:
+                    hdlrs(self, lval_slice, lloc_slice)
+                elif hdlrs.__code__.co_argcount == 2:
+                    hdlrs(self, lval_slice)
+                elif hdlrs.__code__.co_argcount == 1:
+                    hdlrs(self)
 
                 if self._error_call_flag:
                     self._error_call_flag = False
@@ -437,7 +453,8 @@ class Parser(metaclass=MetaParser):
                     goto_state = grmtab_goto[state_stack[-1], prod_left_idx]
                     state_stack.append(goto_state)
                     state_top = goto_state
-                    symbol_stack.append(ReduceToken(prod_left_sym, tslice[0]))
+                    symbol_stack.append(
+                        ReduceToken(prod_left_sym, lval_slice[0], lloc_slice[0]))
                     continue
 
             if action_type == 0 or manual_error:
@@ -454,12 +471,12 @@ class Parser(metaclass=MetaParser):
 
                 self.recovering_status = 3
 
-                if las_next.type != AUG_SYMBOL_ERROR:
-                    if symbol_stack[-1].type == AUG_SYMBOL_ERROR:
+                if las_next.char != AUG_SYMBOL_ERROR:
+                    if symbol_stack[-1].char == AUG_SYMBOL_ERROR:
                         las_next = None  # discard directly
                     else:
                         las_stash.append(las_next)
-                        las_next = ReduceToken(AUG_SYMBOL_ERROR, err_msg)
+                        las_next = ReduceToken(AUG_SYMBOL_ERROR, err_msg, None)
                 else:
                     if len(state_stack) <= 1:
                         raise SyntaxError(err_msg)
