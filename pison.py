@@ -26,10 +26,8 @@ class DefaultLogger(object):
 
 # Class Production
 class Production(object):
-    """
-    This class keeps anything about production, including
-    left part, right part and prec part, etc.
-    """
+    """This class keeps anything about production, including
+    left part, right part and prec part, etc. """
     def __init__(self, left, right, *, prec=None, hdlr=None):
         self._tuple = (left, *right)
         self.prec = prec
@@ -47,9 +45,7 @@ class Production(object):
 
 
 class ReduceToken(object):
-    """
-    Inner used Token class.
-    """
+    """Inner used Token class."""
     def __init__(self, type, value):
         self.type = type
         self.value = value
@@ -154,9 +150,7 @@ class AbsProductionTuple(tuple):
 
 
 class MetaHelperStore(object):
-    """
-    This class provides a temporary storage space.
-    """
+    """This class provides a temporary storage space."""
     def __init__(self):
         self.prods = []
         self.hdlrs = []
@@ -165,9 +159,7 @@ class MetaHelperStore(object):
 
 
 class MetaParser(type):
-    """
-    Metaclass here.
-    """
+    """Metaclass here."""
     stores = {}
 
     @classmethod
@@ -287,9 +279,8 @@ class MetaParser(type):
             if not callable(cls.error):
                 raise TypeError('Error handler must be callable.')
             cls._error_cb = cls.error
-            del cls.error
         else:
-            cls._error_cb = _default_error_cb
+            cls.error = cls._error_cb = _default_error_cb
 
 
 _DEFAULT_SYNTAX_ERROR_INSTANCE = SyntaxError('syntax error')
@@ -301,7 +292,6 @@ class Parser(metaclass=MetaParser):
 
         self._error_call_flag = False
         self.recovering_status = 0
-
         self.state_stack = []
         self.symbol_stack = []
 
@@ -318,7 +308,6 @@ class Parser(metaclass=MetaParser):
             else:
                 self.logger = DefaultLogger(f=debug)
 
-        # debug logger
         logger = self.logger
         if logger:
             logger.debug('Parser Grammar Information --->')
@@ -330,12 +319,17 @@ class Parser(metaclass=MetaParser):
             for p in cls._prods:
                 logger.debug('. ' + repr(p))
 
+    # def error(self, *args, **kwargs):
+    #     return self.__class__._error_cb(*args, **kwargs)
+
     def errok(self):
+        """Immediately quit recovering mode."""
         self.recovering_status = 0
 
     @property
-    def errstatus(self):
-        return self.recovering_status
+    def recovering(self):
+        """Whether parser is recovering from a syntax error."""
+        return bool(self.recovering_status)
 
     def restart(self):
         self.state_stack[:] = [0]
