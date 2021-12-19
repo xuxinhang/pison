@@ -299,6 +299,7 @@ class Parser(metaclass=MetaParser):
         cls = self.__class__
 
         self._error_call_flag = False
+        self.nerrs = 0
         self.recovering_status = 0
         self.state_stack = []
         self.symbol_stack = []
@@ -366,12 +367,12 @@ class Parser(metaclass=MetaParser):
             raise ValueError('Fail to load grammar paring table GOTO')
 
         # reset runtime variables
+        self.nerrs = 0
         state_stack = self.state_stack
         symbol_stack = self.symbol_stack
         state_top = 0
         state_stack[:] = [state_top]
         symbol_stack[:] = []
-
         las_stash = []
         las_next = None
         manual_error = None
@@ -467,6 +468,7 @@ class Parser(metaclass=MetaParser):
                 else:
                     # report this error if not in recovering mode
                     if self.recovering_status == 0:
+                        self.nerrs += 1
                         cls._error_cb(self, err_msg)
 
                 self.recovering_status = 3
