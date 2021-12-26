@@ -375,7 +375,7 @@ class Parser(metaclass=MetaParser):
         symbol_stack[:] = []
         las_stash = []
         las_next = None
-        manual_error = None
+        manual_error = False
 
         while True:
             if las_next is None:
@@ -464,7 +464,7 @@ class Parser(metaclass=MetaParser):
                     logger.debug('Action::Error')
 
                 if manual_error:
-                    pass
+                    manual_error = False
                 else:
                     # report this error if not in recovering mode
                     if self.recovering_status == 0:
@@ -474,8 +474,9 @@ class Parser(metaclass=MetaParser):
                 self.recovering_status = 3
 
                 if las_next.char != AUG_SYMBOL_ERROR:
-                    if symbol_stack[-1].char == AUG_SYMBOL_ERROR:
-                        las_next = None  # discard directly
+                    if len(symbol_stack) and symbol_stack[-1].char == AUG_SYMBOL_ERROR:
+                        # Drop this token if the toppest symbol already an error.
+                        las_next = None
                     else:
                         las_stash.append(las_next)
                         las_next = ReduceToken(AUG_SYMBOL_ERROR, err_msg, None)
