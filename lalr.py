@@ -50,10 +50,12 @@ class GrammarLalr(GrammarBase):
     # ---------
     # Basic grammar routines
     # ---------
-    def _run_first_with_trace(self, is_beta, s):
-        trace = []
+    def _run_first_with_trace(self, is_beta: bool, s):
+        # "trace" records the path to the current symbol whose items
+        # are tuple (symbol: int, maybe_empty: bool)
+        trace: list[tuple[int, bool]] = []
 
-        def first_single(X):
+        def first_single(X: int):
             if X < 0:  # for terminals
                 return [X]
 
@@ -61,13 +63,26 @@ class GrammarLalr(GrammarBase):
                 return self._first_map[X]
 
             fst = []
+            maybe_empty = False
+
+            # First, scan all the productions to decide whether this symbol
+            # may be empty.
             for prod in self._prod_map[X]:
                 prod_exp = self.prods[prod]
                 if len(prod_exp) == 1 or prod_exp[1] is None:
-                    if None not in fst:
-                        fst.append(None)
+                    maybe_empty = True
+            if maybe_empty:
+                fst.append(None)
+
+            # Then, process other productions.
+            # Because we have known whether this symbol can be empty, so its
+            # recursive productions can be processed properly.
+            for prod in self._prod_map[X]:
+                prod_exp = self.prods[prod]
+                if len(prod_exp) == 1 or prod_exp[1] is None:
+                    pass
                 else:
-                    trace.append(X)
+                    trace.append((X, maybe_empty))
                     for s in first_sequence(prod_exp[1:]):
                         if s not in fst:
                             fst.append(s)
@@ -76,19 +91,23 @@ class GrammarLalr(GrammarBase):
             self._first_map[X] = fst
             return fst
 
-        def first_sequence(beta):
+        def first_sequence(beta: list[int]):
             fst = []
             for X in beta:
-                if X in trace:  # avoid production loop
-                    break
-                is_epsilon_existed = False
-                for s in first_single(X):
-                    if s is None:
-                        is_epsilon_existed = True
-                    else:
-                        if s not in fst:
-                            fst.append(s)
-                if not is_epsilon_existed:
+                maybe_epsilon = False
+                # not to trap into the recursive symbols
+                for trace_symbol, trace_maybe_empty in trace:
+                    if trace_symbol == X:
+                        maybe_epsilon = trace_maybe_empty
+                        break
+                else:
+                    for s in first_single(X):
+                        if s is None:
+                            maybe_epsilon = True
+                        else:
+                            if s not in fst:
+                                fst.append(s)
+                if not maybe_epsilon:
                     break
             else:
                 if None not in fst:

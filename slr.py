@@ -59,11 +59,11 @@ class GrammarSlr(GrammarBase):
         fst = []
         for p in (p for p in self.abs_prods if p[0] == X):
             # for empty productions
-            if len(p) == 1 or p[1] is None:
+            if (len(p) == 1 or p[1] is None) and None not in fst:
                 fst.append(None)
-                continue
+        for p in (p for p in self.abs_prods if p[0] == X):
             # Remember to skip left-recursive productions
-            fst += self._first_beta(p[1:], left=X, trace=trace+[X])
+            fst += self._first_beta(p[1:], left=X, trace=trace+[(X, None in fst)])
 
         self._first_map[X] = fst
         return fst
@@ -71,11 +71,13 @@ class GrammarSlr(GrammarBase):
     def _first_beta(self, beta, left=None, trace=None):
         ret = []
         for X in beta:
-            if X == left or (trace is not None and X in trace):
+            if trace is not None and (X, False) in trace:
                 break
                 # TODO: Consider the following productions:
                 #   exp -> exp RIGHT
                 #   exp -> None
+            elif trace is not None and (X, True) in trace:
+                continue
             X_first = self._first(X, trace=trace)
             ret += (s for s in X_first if s is not None)
             if None not in X_first:
