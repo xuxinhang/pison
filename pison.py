@@ -1,7 +1,7 @@
 from com import AUG_SYMBOL_EOF, AUG_SYMBOL_SI, AUG_SYMBOL_ERROR
 
 
-class DefaultLogger(object):
+class BaseLogger(object):
     def __init__(self, *, f):
         if f is None:
             from sys import stderr
@@ -9,6 +9,20 @@ class DefaultLogger(object):
         else:
             self.f = f
 
+    def debug(self, msg):
+        pass
+
+    def info(self, msg):
+        pass
+
+    def warning(self, msg):
+        pass
+
+    def error(self, msg):
+        pass
+
+
+class DiagnosticLogger(BaseLogger):
     def debug(self, msg):
         self.f.write('DEBUG: ' + msg + '\n')
 
@@ -21,7 +35,10 @@ class DefaultLogger(object):
     def error(self, msg, *args, **kwargs):
         self.f.write('ERROR: ' + msg + '\n')
 
-    critical = debug
+
+class NormalLogger(BaseLogger):
+    def error(self, msg):
+        self.f.write('' + msg + '\n')
 
 
 # Class Production
@@ -305,21 +322,24 @@ class Parser(metaclass=MetaParser):
         self.symbol_stack = []
 
         # configurate the logger
-        self.logger = None
-        if logger:
+        if logger is not None:
             self.logger = logger
         else:
             if debug is True:
                 from sys import stderr
-                self.logger = DefaultLogger(f=stderr)
+                self.logger = DiagnosticLogger(f=stderr)
             elif debug is False or debug is None:
-                self.logger = None
+                from sys import stderr
+                self.logger = NormalLogger(f=stderr)
             else:
-                self.logger = DefaultLogger(f=debug)
+                raise TypeError('Must assign "debug" as a boolean.')
 
         logger = self.logger
         if logger:
-            logger.debug('Parser Grammar Information --->')
+            logger.debug('==============================')
+            logger.debug('| Parser Grammar Information |')
+            logger.debug('==============================')
+            logger.debug('Grammar engine: ' + cls.grammar_engine)
             logger.debug('Terminals (%d):' % (len(cls._terminals), ))
             logger.debug('. ' + repr(cls._terminals))
             logger.debug('Nonterminals (%d):' % (len(cls._nonterminals), ))
@@ -391,16 +411,29 @@ class Parser(metaclass=MetaParser):
                     if logger:
                         logger.debug('Fetch new token: ' + str(las_next))
 
-            try:
-                las_next_idx = cls._terminals.index(las_next.char)
-            except Exception:
-                raise SyntaxError('Unknown token type ' + str(las_next.char))
-            action = grmtab_action[state_top, las_next_idx]
-            action_type = action & 3
-            action_value = action >> 2
-
             if logger:
                 logger.debug('State = %s << Lookahead = %s' % (state_top, las_next))
+
+            # set the flag to enter error recovering for special tokens.
+            if las_next.char is '__undef__' or las_next.char is NotImplemented:
+                logger.error('invalid token: ' + str(las_next.char))
+                manual_error = True
+                action_type = -1
+            elif las_next.char is '__error__':
+                manual_error = True
+                action_type = -1
+            else:
+                try:
+                    las_next_idx = cls._terminals.index(las_next.char)
+                except Exception:
+                    logger.error('invalid token: ' + str(las_next.char))
+                    manual_error = True
+                    action_type = -1
+                else:
+                    # it's a normal token
+                    action = grmtab_action[state_top, las_next_idx]
+                    action_type = action & 3
+                    action_value = action >> 2
 
             if action_type == 1:
                 if logger:
